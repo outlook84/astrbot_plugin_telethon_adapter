@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+from typing import Any, Callable
+
+from astrbot import logger
+from astrbot.api.message_components import File, Image, Record, Video
+
+try:
+    from pydantic import PrivateAttr
+except ImportError:
+    from pydantic.v1 import PrivateAttr
+
+try:
+    from astrbot.core.utils.media_utils import convert_audio_to_wav
+except Exception:
+    convert_audio_to_wav = None
+
+
+class TelethonLazyMedia:
+    def __init__(
+        self,
+        msg: Any,
+        temp_dir_getter: Callable[[], str],
+        register_temp_file: Callable[[str], None],
+        fallback_name: str,
+    ) -> None:
+        self._msg = msg
+        self._temp_dir_getter = temp_dir_getter
+        self._register_temp_file = register_temp_file
+        self._fallback_name = fallback_name
+        self._downloaded_path: str | None = None
+        self._lock = asyncio.Lock()
+
+    async def ensure_downloaded(self) -> str:
+        async with self._lock:
+            if self._downloaded_path and os.path.exists(self._downloaded_path):
+                return self._downloaded_path
+
+            temp_dir = self._temp_dir_getter()
+            Path(temp_dir).mkdir(parents=True, exist_ok=True)
+            downloaded = await self._msg.download_media(file=temp_dir)
+            if not downloaded:
+                raise RuntimeError("Telethon media download returned empty path")
+
+            if isinstance(downloaded, (bytes, bytearray)):
+                target = os.path.join(temp_dir, self._fallback_name)
+                with open(target, "wb") as f:
+                    f.write(downloaded)
+            else:
+                target = str(downloaded)
+
+            self._downloaded_path = os.path.abspath(target)
+            self._register_temp_file(self._downloaded_path)
+            return self._downloaded_path
+
+
+class LazyImage(Image):
+    _downloader: TelethonLazyMedia = PrivateAttr()
+
+    def __init__(self, downloader: TelethonLazyMedia, **kwargs: Any) -> None:
+        super().__init__(file="telethon-lazy://image", **kwargs)
+        object.__setattr__(self, "_downloader", downloader)
+
+    async def convert_to_file_path(self) -> str:
+        return await self._downloader.ensure_downloaded()
+
+
+class LazyRecord(Record):
+    _downloader: TelethonLazyMedia = PrivateAttr()
+    _converted_path: str | None = PrivateAttr(default=None)
+
+    def __init__(self, downloader: TelethonLazyMedia, **kwargs: Any) -> None:
+        super().__init__(file="telethon-lazy://record", **kwargs)
+        object.__setattr__(self, "_downloader", downloader)
+
+    async def convert_to_file_path(self) -> str:
+        original_path = await self._downloader.ensure_downloaded()
+        converted_path = self._converted_path
+        if converted_path and os.path.exists(converted_path):
+            return converted_path
+
+        if original_path.lower().endswith(".wav") or not convert_audio_to_wav:
+            return original_path
+
+        wav_path = os.path.splitext(original_path)[0] + ".wav"
+        try:
+            converted = await convert_audio_to_wav(original_path, wav_path)
+            object.__setattr__(self, "_converted_path", converted)
+            return converted
+        except Exception as e:
+            logger.warning(f"[Telethon] 音频转 WAV 失败，回退原文件: {e}")
+            return original_path
+
+
+class LazyVideo(Video):
+    _downloader: TelethonLazyMedia = PrivateAttr()
+
+    def __init__(self, downloader: TelethonLazyMedia, **kwargs: Any) -> None:
+        super().__init__(file="telethon-lazy://video", **kwargs)
+        object.__setattr__(self, "_downloader", downloader)
+
+    async def convert_to_file_path(self) -> str:
+        return await self._downloader.ensure_downloaded()
+
+
+class LazyFile(File):
+    _downloader: TelethonLazyMedia = PrivateAttr()
+
+    def __init__(self, name: str, downloader: TelethonLazyMedia, **kwargs: Any) -> None:
+        super().__init__(name=name, file="", url="")
+        object.__setattr__(self, "_downloader", downloader)
+
+    async def get_file(self, allow_return_url: bool = False) -> str:
+        return await self._downloader.ensure_downloaded()

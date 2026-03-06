@@ -1,0 +1,5 @@
+name: telethon_adapter
+desc: Telethon Userbot 适配器
+version: 0.1.0
+author: outlook84
+repo: https://github.com/outlook84/astrbot_plugin_telethon_adapter

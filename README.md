@@ -1,0 +1,68 @@
+# Telethon Userbot 适配器
+
+为 AstrBot 增加基于 Telethon 的 Telegram Userbot 适配器。
+
+## 功能
+
+- 使用用户账户接收 Telegram 消息并回发文本与图片消息
+- 长文本自动按 Telegram 上限分片发送
+- 支持引用回复（`Reply` 消息段）
+
+## 安装
+
+将插件目录放置到 `AstrBot` 的 `data/plugins/` 目录下：
+
+```
+data/plugins/astrbot_plugin_telethon_adapter/
+```
+安装插件后，AstrBot 会自动根据 `requirements.txt` 为插件安装依赖库。
+
+依赖里包含 `cryptg`，用于提升 Telethon 的加解密性能。
+- 常见 glibc 发行版通常可以直接安装预编译 wheel。
+- Alpine Linux 以及其它使用 musl 库的发行版，需要本地编译 `cryptg` 的编译环境，至少需要 `python3-dev`、`musl-dev`、`gcc`、`linux-headers`、`rust`、`cargo`。
+
+## 生成 `session_string`
+
+先在 [my.telegram.org](https://my.telegram.org) 申请 `api_id` 和 `api_hash`。如果无法申请到，换落地 IP 地址。
+
+`session_string` 需要通过交互授权生成。在`AstrBot` 的 `data/plugins/` 目录下运行：
+
+```bash
+python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
+```
+
+运行后会依次提示输入：
+
+- `api_id`
+- `api_hash`
+- 手机号
+
+然后脚本会向 Telegram 请求登录验证码，并继续要求输入：
+
+- Telegram 登录验证码
+- 二次验证密码（如果账号开启了 2FA）
+
+脚本最终会输出一段 `StringSession`，把它复制到 AstrBot 配置里的 `session_string` 即可。
+
+注意：Telegram 的验证码很多时候不是短信，而是发到你已经登录的 Telegram 客户端里的官方 `Telegram` 会话。
+
+## AstrBot 适配器配置
+
+在 AstrBot 中新增平台适配器并选择 `telethon_userbot`，填入：
+
+- `api_id`: Telegram API ID（整数）
+- `api_hash`: Telegram API Hash
+- `session_string`: 上一步得到的 StringSession
+- `trigger_prefix`: 触发前缀，默认是 `-astr`
+- `ignore_self_messages`: 是否忽略 sender 为自己账号的消息，默认关闭。
+- `download_incoming_media`: 是否下载收到的媒体文件（建议 `true`）
+- `telethon_media_group_timeout`: 媒体组聚合防抖延迟（秒，默认 `1.2`）
+- `telethon_media_group_max_wait`: 媒体组最大等待时间（秒，默认 `8.0`）
+
+## 注意事项
+
+- 这是 Userbot 方案，账号风控由 Telegram 官方策略决定，账户被限制/封禁风险自负。
+- `session_string` 具备 Telegram 账号完全权限，请妥善保管。
+- 如果 `session_string` 失效，需要重新生成并更新配置。
+- 默认仅处理以 `-astr` 开头的消息。
+- 当前插件不会在 AstrBot 运行过程中自动弹出登录交互，所以首次授权必须先在终端里执行一次上面的脚本。
