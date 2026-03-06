@@ -5,7 +5,7 @@ import os
 import re
 from typing import Any
 
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import At, File, Image, Location, Plain, Record, Reply, Video
 from astrbot.api.platform import (
