@@ -58,6 +58,7 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `download_incoming_media`: 是否下载收到的媒体文件（建议 `true`）
 - `telethon_media_group_timeout`: 媒体组聚合防抖延迟（秒，默认 `1.2`）
 - `telethon_media_group_max_wait`: 媒体组最大等待时间（秒，默认 `8.0`）
+- `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”，不要使用“实时分段回复”。
 
 ## 注意事项
 

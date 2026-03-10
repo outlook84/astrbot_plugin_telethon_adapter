@@ -124,6 +124,7 @@ def _parse_bool(value: Any, default: bool) -> bool:
 @register_platform_adapter(
     "telethon_userbot",
     "Telethon Userbot 适配器",
+    support_streaming_message=False,
     default_config_tmpl={
         "api_id": 123456,
         "api_hash": "your_api_hash",
@@ -192,6 +193,7 @@ class TelethonPlatformAdapter(Platform):
             name="telegram",
             description="Telethon Userbot 适配器",
             id=adapter_id,
+            support_streaming_message=False,
         )
 
     async def run(self):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from typing import Any
 
 from astrbot.api import logger
@@ -16,6 +17,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
+from telethon import functions, types
 
 
 class TelethonEvent(AstrMessageEvent):
@@ -39,6 +41,37 @@ class TelethonEvent(AstrMessageEvent):
         self.client = client
         self.peer = int(session_id)
 
+    async def _send_chat_action(self, action: types.TypeSendMessageAction) -> None:
+        try:
+            await self.client(
+                functions.messages.SetTypingRequest(
+                    peer=self.peer,
+                    action=action,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"[Telethon] 发送 chat action 失败: {e!s}")
+
+    @asynccontextmanager
+    async def _chat_action_scope(
+        self,
+        action_name: str,
+        fallback_action: types.TypeSendMessageAction,
+    ):
+        action_method = getattr(self.client, "action", None)
+        if callable(action_method):
+            try:
+                async with action_method(self.peer, action_name):
+                    yield
+                return
+            except Exception as e:
+                logger.debug(
+                    f"[Telethon] action 上下文不可用，回退单次 chat action: {e!s}"
+                )
+
+        await self._send_chat_action(fallback_action)
+        yield
+
     async def _flush_text(
         self, text_parts: list[str], reply_to: int | None
     ) -> int | None:
@@ -57,25 +90,26 @@ class TelethonEvent(AstrMessageEvent):
         path: str,
         caption: str | None,
         reply_to: int | None,
+        action_name: str,
+        fallback_action: types.TypeSendMessageAction,
     ) -> int | None:
         try:
-            await self.client.send_file(
-                self.peer,
-                file=path,
-                caption=caption,
-                reply_to=reply_to,
-            )
+            async with self._chat_action_scope(action_name, fallback_action):
+                await self.client.send_file(
+                    self.peer,
+                    file=path,
+                    caption=caption,
+                    reply_to=reply_to,
+                )
         except Exception:
             logger.exception("[Telethon] 发送媒体失败: path=%s", path)
         return reply_to
 
+    async def send_typing(self) -> None:
+        await self._send_chat_action(types.SendMessageTypingAction())
+
     async def send(self, message: MessageChain):
         reply_to: int | None = None
-        if getattr(self.message_obj, "message_id", None):
-            try:
-                reply_to = int(self.message_obj.message_id)
-            except (TypeError, ValueError):
-                reply_to = None
         text_parts: list[str] = []
 
         for item in message.chain:
@@ -105,22 +139,46 @@ class TelethonEvent(AstrMessageEvent):
 
             if isinstance(item, Image):
                 file_path = await item.convert_to_file_path()
-                reply_to = await self._send_media(file_path, None, reply_to)
+                reply_to = await self._send_media(
+                    file_path,
+                    None,
+                    reply_to,
+                    "photo",
+                    types.SendMessageUploadPhotoAction(progress=0),
+                )
                 continue
 
             if isinstance(item, Video):
                 file_path = await item.convert_to_file_path()
-                reply_to = await self._send_media(file_path, None, reply_to)
+                reply_to = await self._send_media(
+                    file_path,
+                    None,
+                    reply_to,
+                    "video",
+                    types.SendMessageUploadVideoAction(progress=0),
+                )
                 continue
 
             if isinstance(item, Record):
                 file_path = await item.convert_to_file_path()
-                reply_to = await self._send_media(file_path, item.text, reply_to)
+                reply_to = await self._send_media(
+                    file_path,
+                    item.text,
+                    reply_to,
+                    "audio",
+                    types.SendMessageUploadAudioAction(progress=0),
+                )
                 continue
 
             if isinstance(item, File):
                 file_path = await item.get_file()
-                reply_to = await self._send_media(file_path, item.name, reply_to)
+                reply_to = await self._send_media(
+                    file_path,
+                    item.name,
+                    reply_to,
+                    "document",
+                    types.SendMessageUploadDocumentAction(progress=0),
+                )
                 continue
 
             logger.warning(f"[Telethon] 暂不支持消息段类型: {item.type}")
@@ -186,6 +244,7 @@ class TelethonEvent(AstrMessageEvent):
         return packed
 
     async def _send_text_with_action(self, text: str, reply_to: int | None):
+        await self.send_typing()
         try:
             return await self.client.send_message(
                 self.peer,
@@ -211,5 +270,19 @@ class TelethonEvent(AstrMessageEvent):
                 await react_method(emoji)
                 return
             except Exception as e:
-                logger.warning(f"[Telethon] 原生 reaction 失败，回退普通消息: {e!s}")
-        await super().react(emoji)
+                logger.warning(f"[Telethon] 原生 reaction 失败，尝试 MTProto 兜底: {e!s}")
+
+        message_id = getattr(self.message_obj, "message_id", None)
+        try:
+            await self.client(
+                functions.messages.SendReactionRequest(
+                    peer=self.peer,
+                    msg_id=int(message_id),
+                    reaction=[types.ReactionEmoji(emoticon=emoji)],
+                )
+            )
+            return
+        except Exception as e:
+            logger.warning(f"[Telethon] MTProto reaction 失败: {e!s}")
+
+        logger.warning("[Telethon] 当前消息对象不支持原生 reaction，已跳过预回应表情")
