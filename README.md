@@ -9,6 +9,14 @@
 - 使用用户账户接收 Telegram 消息并回发文本与图片消息
 - 长文本自动按 Telegram 上限分片发送
 - 支持引用回复（`Reply` 消息段）
+- 提供 `tg profile` 命令，用于获取用户/群组/频道资料
+
+## 注意事项
+
+- 这是 Userbot 方案，账号风控由 Telegram 官方策略决定，账户被限制/封禁风险自负。
+- `session_string` 具备 Telegram 账号完全权限，请妥善保管。
+- 如果 `session_string` 失效，需要重新生成并更新配置。
+- `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”，不要使用“实时分段回复”。
 
 ## 安装
 
@@ -60,7 +68,6 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `download_incoming_media`: 是否下载收到的媒体文件（建议 `true`）
 - `telethon_media_group_timeout`: 媒体组聚合防抖延迟（秒，默认 `1.2`）
 - `telethon_media_group_max_wait`: 媒体组最大等待时间（秒，默认 `8.0`）
-- `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”，不要使用“实时分段回复”。
 - `proxy_type`: 代理类型，支持 `socks5`、`socks4`、`http`、`mtproto`
 - `proxy_host`: 代理服务器地址
 - `proxy_port`: 代理端口
@@ -68,10 +75,19 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `proxy_password`: SOCKS/HTTP 代理密码，可选
 - `proxy_secret`: 仅 `mtproto` 代理需要填写
 
-## 注意事项
+## Telethon 扩展命令
 
-- 这是 Userbot 方案，账号风控由 Telegram 官方策略决定，账户被限制/封禁风险自负。
-- `session_string` 具备 Telegram 账号完全权限，请妥善保管。
-- 如果 `session_string` 失效，需要重新生成并更新配置。
-- 默认仅处理以 `-astr` 开头的消息。
-- 当前插件不会在 AstrBot 运行过程中自动弹出登录交互，所以首次授权必须先在终端里执行一次上面的脚本。
+`tg profile` 用法：
+
+```text
+-astr tg profile
+-astr tg profile @username
+-astr tg profile https://t.me/channel_name
+```
+
+`tg profile` 的目标解析顺序如下：
+
+- 显式参数：`@username`、数字 ID、`t.me` / `telegram.me` 链接、`me`
+- 回复消息：查询被回复消息的发送者
+- 私聊场景下的当前对话用户
+- 群组 / 频道场景下的当前会话
