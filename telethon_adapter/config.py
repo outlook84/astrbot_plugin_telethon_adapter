@@ -272,6 +272,12 @@ def validate_config(adapter: Any) -> None:
                 adapter.config.get("proxy_port"),
                 "启用代理时请填写大于 0 的代理端口。",
             )
+        if adapter.proxy_type == "mtproto" and not adapter.proxy_secret:
+            raise config_error(
+                "proxy_secret",
+                adapter.config.get("proxy_secret"),
+                "使用 MTProto 代理时请填写 proxy_secret。",
+            )
 
     if adapter.media_group_timeout < 0:
         raise config_error(

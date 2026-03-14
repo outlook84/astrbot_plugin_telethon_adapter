@@ -295,6 +295,25 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "proxy_host.*''.*代理主机"):
             adapter._validate_config()
 
+    def test_validate_config_requires_mtproto_proxy_secret(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "proxy_type": "mtproto",
+                "proxy_host": "127.0.0.1",
+                "proxy_port": "443",
+                "proxy_secret": "",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "proxy_secret.*''.*MTProto"):
+            adapter._validate_config()
+
     def test_validate_config_allows_non_positive_media_ttl(self):
         module = _load_adapter_module()
         adapter = module.TelethonPlatformAdapter(
