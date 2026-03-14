@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -47,6 +48,8 @@ from telethon.tl.types import (
 
 from .lazy_media import LazyFile, LazyImage, LazyRecord, LazyVideo, TelethonLazyMedia
 from .telethon_event import TelethonEvent
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
 TELETHON_CONFIG_METADATA = {
@@ -167,6 +170,7 @@ def _parse_bool(value: Any, default: bool) -> bool:
 @register_platform_adapter(
     "telethon_userbot",
     "Telethon Userbot 适配器",
+    logo_path=str(PLUGIN_ROOT / "logo.png"),
     support_streaming_message=False,
     default_config_tmpl={
         "api_id": 123456,

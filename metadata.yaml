@@ -3,3 +3,6 @@ desc: 基于 Telethon 的 Telegram Userbot 适配器
 version: 0.1.3
 author: outlook84
 repo: https://github.com/outlook84/astrbot_plugin_telethon_adapter
+display_name: Telegram Userbot Adapter
+support_platforms:
+  - telegram
