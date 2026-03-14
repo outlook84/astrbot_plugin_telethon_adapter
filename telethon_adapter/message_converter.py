@@ -106,30 +106,52 @@ class TelethonMessageConverter:
             )
             try:
                 reply_msg = await msg.get_reply_message()
+            except Exception as e:
+                logger.warning(
+                    "[Telethon] 拉取引用消息失败，退化为空引用: chat_id=%s message_id=%s reply_to=%s error=%s",
+                    chat_id,
+                    getattr(msg, "id", None),
+                    reply_id,
+                    e,
+                )
+            else:
                 if reply_msg:
-                    reply_sender = await reply_msg.get_sender()
-                    reply_chat_id = str(getattr(reply_msg, "chat_id", chat_id))
-                    reply_is_private = bool(getattr(reply_msg, "is_private", is_private))
-                    reply_abm = await self.convert_telethon_message(
-                        msg=reply_msg,
-                        sender=reply_sender,
-                        chat_id=reply_chat_id,
-                        is_private=reply_is_private,
-                        include_reply=False,
-                        strip_trigger_prefix=False,
-                    )
-                    reply_component = Reply(
-                        id=reply_abm.message_id,
-                        chain=reply_abm.message,
-                        sender_id=reply_abm.sender.user_id,
-                        sender_nickname=reply_abm.sender.nickname,
-                        time=int(getattr(getattr(reply_msg, "date", None), "timestamp", lambda: 0)()),
-                        message_str=reply_abm.message_str,
-                        text=reply_abm.message_str,
-                        qq=reply_abm.sender.user_id,
-                    )
-            except Exception:
-                logger.exception("[Telethon] 获取引用消息失败")
+                    try:
+                        reply_sender = await reply_msg.get_sender()
+                        reply_chat_id = str(getattr(reply_msg, "chat_id", chat_id))
+                        reply_is_private = bool(getattr(reply_msg, "is_private", is_private))
+                        reply_abm = await self.convert_telethon_message(
+                            msg=reply_msg,
+                            sender=reply_sender,
+                            chat_id=reply_chat_id,
+                            is_private=reply_is_private,
+                            include_reply=False,
+                            strip_trigger_prefix=False,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[Telethon] 引用消息结构转换失败: chat_id=%s message_id=%s reply_to=%s",
+                            chat_id,
+                            getattr(msg, "id", None),
+                            reply_id,
+                        )
+                    else:
+                        reply_component = Reply(
+                            id=reply_abm.message_id,
+                            chain=reply_abm.message,
+                            sender_id=reply_abm.sender.user_id,
+                            sender_nickname=reply_abm.sender.nickname,
+                            time=int(
+                                getattr(
+                                    getattr(reply_msg, "date", None),
+                                    "timestamp",
+                                    lambda: 0,
+                                )()
+                            ),
+                            message_str=reply_abm.message_str,
+                            text=reply_abm.message_str,
+                            qq=reply_abm.sender.user_id,
+                        )
             message.message.append(reply_component)
 
         text_components = self.parse_text_components(

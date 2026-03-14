@@ -55,6 +55,16 @@ class TelethonEvent(AstrMessageEvent):
         self.client = client
         self.peer = int(session_id)
 
+    def _message_log_context(self, reply_to: int | None = None) -> dict[str, Any]:
+        message_obj = getattr(self, "message_obj", None)
+        sender = getattr(message_obj, "sender", None)
+        return {
+            "chat_id": self.peer,
+            "msg_id": getattr(message_obj, "message_id", None),
+            "sender_id": getattr(sender, "user_id", None),
+            "reply_to": reply_to,
+        }
+
     async def _send_chat_action(self, action: types.TypeSendMessageAction) -> None:
         try:
             await self.client(
@@ -64,7 +74,14 @@ class TelethonEvent(AstrMessageEvent):
                 )
             )
         except Exception as e:
-            logger.warning(f"[Telethon] 发送 chat action 失败: {e!s}")
+            context = self._message_log_context()
+            logger.warning(
+                "[Telethon] 发送 chat action 失败: chat_id=%s msg_id=%s sender_id=%s error=%s",
+                context["chat_id"],
+                context["msg_id"],
+                context["sender_id"],
+                e,
+            )
 
     @asynccontextmanager
     async def _chat_action_scope(
@@ -79,8 +96,15 @@ class TelethonEvent(AstrMessageEvent):
                     yield
                 return
             except Exception as e:
+                context = self._message_log_context()
                 logger.debug(
-                    f"[Telethon] action 上下文不可用，回退单次 chat action: {e!s}"
+                    "[Telethon] action 上下文不可用，回退单次 chat action: "
+                    "chat_id=%s msg_id=%s sender_id=%s action=%s error=%s",
+                    context["chat_id"],
+                    context["msg_id"],
+                    context["sender_id"],
+                    action_name,
+                    e,
                 )
 
         await self._send_chat_action(fallback_action)
@@ -116,7 +140,16 @@ class TelethonEvent(AstrMessageEvent):
                     reply_to=reply_to,
                 )
         except Exception:
-            logger.exception("[Telethon] 发送媒体失败: path=%s", path)
+            context = self._message_log_context(reply_to)
+            logger.exception(
+                "[Telethon] 发送媒体失败: chat_id=%s msg_id=%s sender_id=%s reply_to=%s action=%s path=%s",
+                context["chat_id"],
+                context["msg_id"],
+                context["sender_id"],
+                context["reply_to"],
+                action_name,
+                path,
+            )
         return reply_to
 
     async def send_typing(self) -> None:
@@ -392,7 +425,16 @@ class TelethonEvent(AstrMessageEvent):
                 **payload,
             )
         except Exception as e:
-            logger.warning(f"[Telethon] Markdown转HTML发送失败，使用普通文本: {e!s}")
+            context = self._message_log_context(reply_to)
+            logger.warning(
+                "[Telethon] Markdown转HTML发送失败，使用普通文本: "
+                "chat_id=%s msg_id=%s sender_id=%s reply_to=%s error=%s",
+                context["chat_id"],
+                context["msg_id"],
+                context["sender_id"],
+                context["reply_to"],
+                e,
+            )
         return await self.client.send_message(
             self.peer,
             text,
@@ -407,7 +449,16 @@ class TelethonEvent(AstrMessageEvent):
                 await react_method(emoji)
                 return
             except Exception as e:
-                logger.warning(f"[Telethon] 原生 reaction 失败，尝试 MTProto 兜底: {e!s}")
+                context = self._message_log_context()
+                logger.warning(
+                    "[Telethon] 原生 reaction 失败，尝试 MTProto 兜底: "
+                    "chat_id=%s msg_id=%s sender_id=%s emoji=%s error=%s",
+                    context["chat_id"],
+                    context["msg_id"],
+                    context["sender_id"],
+                    emoji,
+                    e,
+                )
 
         message_id = getattr(self.message_obj, "message_id", None)
         try:
@@ -420,6 +471,14 @@ class TelethonEvent(AstrMessageEvent):
             )
             return
         except Exception as e:
-            logger.warning(f"[Telethon] MTProto reaction 失败: {e!s}")
+            context = self._message_log_context()
+            logger.warning(
+                "[Telethon] MTProto reaction 失败: chat_id=%s msg_id=%s sender_id=%s emoji=%s error=%s",
+                context["chat_id"],
+                context["msg_id"],
+                context["sender_id"],
+                emoji,
+                e,
+            )
 
         logger.warning("[Telethon] 当前消息对象不支持原生 reaction，已跳过预回应表情")

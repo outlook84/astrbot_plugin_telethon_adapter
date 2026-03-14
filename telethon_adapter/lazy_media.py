@@ -15,7 +15,7 @@ except ImportError:
 
 try:
     from astrbot.core.utils.media_utils import convert_audio_to_wav
-except Exception:
+except ImportError:
     convert_audio_to_wav = None
 
 
@@ -88,7 +88,13 @@ class LazyRecord(Record):
             if converted_path and os.path.exists(converted_path):
                 return converted_path
 
-            if original_path.lower().endswith(".wav") or not convert_audio_to_wav:
+            if original_path.lower().endswith(".wav"):
+                return original_path
+            if not convert_audio_to_wav:
+                logger.warning(
+                    "[Telethon] 音频转换能力不可用，回退原文件: path=%s",
+                    original_path,
+                )
                 return original_path
 
             wav_path = os.path.splitext(original_path)[0] + ".wav"

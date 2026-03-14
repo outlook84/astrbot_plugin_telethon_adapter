@@ -19,11 +19,11 @@ from astrbot.core.platform.astr_message_event import MessageSesion
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-except Exception:
+except ImportError:
     get_astrbot_temp_path = None
 try:
     from python_socks import ProxyType
-except Exception:
+except ImportError:
     ProxyType = None
 
 from telethon import TelegramClient, events
@@ -332,7 +332,13 @@ class TelethonPlatformAdapter(Platform):
         try:
             abm = await self._convert_message(event, include_reply=True)
         except Exception:
-            logger.exception("[Telethon] 转换消息失败")
+            logger.exception(
+                "[Telethon] 转换消息失败: chat_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                getattr(event, "chat_id", None),
+                getattr(event.message, "id", None),
+                getattr(event, "sender_id", None),
+                getattr(getattr(event.message, "reply_to", None), "reply_to_msg_id", None),
+            )
             return
 
         logger.info(
@@ -453,7 +459,18 @@ class TelethonPlatformAdapter(Platform):
         try:
             merged = await self._convert_message(trigger_event, include_reply=True)
         except Exception:
-            logger.exception("[Telethon] 媒体组首条消息转换失败")
+            logger.exception(
+                "[Telethon] 媒体组首条消息转换失败: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                getattr(trigger_event, "chat_id", None),
+                grouped_id,
+                getattr(trigger_event.message, "id", None),
+                getattr(trigger_event, "sender_id", None),
+                getattr(
+                    getattr(trigger_event.message, "reply_to", None),
+                    "reply_to_msg_id",
+                    None,
+                ),
+            )
             return
 
         for extra_event in events_list[1:]:
@@ -462,7 +479,18 @@ class TelethonPlatformAdapter(Platform):
             try:
                 extra = await self._convert_message(extra_event, include_reply=False)
             except Exception:
-                logger.exception("[Telethon] 媒体组子消息转换失败")
+                logger.exception(
+                    "[Telethon] 媒体组子消息转换失败: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                    getattr(extra_event, "chat_id", None),
+                    grouped_id,
+                    getattr(extra_event.message, "id", None),
+                    getattr(extra_event, "sender_id", None),
+                    getattr(
+                        getattr(extra_event.message, "reply_to", None),
+                        "reply_to_msg_id",
+                        None,
+                    ),
+                )
                 continue
 
             merged.message.extend(extra.message)
@@ -483,7 +511,11 @@ class TelethonPlatformAdapter(Platform):
             try:
                 base_dir = str(get_astrbot_temp_path())
             except Exception:
-                pass
+                logger.warning(
+                    "[Telethon] 获取 AstrBot 临时目录失败，回退系统临时目录: adapter_id=%s",
+                    self.config.get("id") or "telethon_userbot",
+                    exc_info=True,
+                )
 
         adapter_id = str(self.config.get("id") or "telethon_userbot").strip() or "telethon_userbot"
         safe_adapter_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", adapter_id)
