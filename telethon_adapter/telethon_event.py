@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import html
 import re
 from contextlib import asynccontextmanager
 from typing import Any
 
+from bs4 import BeautifulSoup
+import markdown
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import (
@@ -28,6 +31,17 @@ class TelethonEvent(AstrMessageEvent):
         "sentence": re.compile(r"[.!?。！？]"),
         "word": re.compile(r"\s"),
     }
+    MARKDOWN_HINT_PATTERNS = (
+        re.compile(r"```"),
+        re.compile(r"(?m)^\s{0,3}#{1,6}\s+\S"),
+        re.compile(r"(?m)^\s{0,3}>\s+\S"),
+        re.compile(r"(?m)^\s{0,3}(?:[-*+]\s+\S|\d+\.\s+\S)"),
+        re.compile(r"(?m)^\|.+\|\s*$"),
+        re.compile(r"\[[^\]\n]+\]\((?:https?://|tg://)[^)]+\)"),
+        re.compile(r"(?<!\*)\*\*[^*\n]+\*\*(?!\*)"),
+        re.compile(r"(?<!_)__[^_\n]+__(?!_)"),
+        re.compile(r"`[^`\n]+`"),
+    )
 
     def __init__(
         self,
@@ -189,12 +203,15 @@ class TelethonEvent(AstrMessageEvent):
     @staticmethod
     def _format_at_text(item: At) -> str:
         qq_str = str(item.qq).strip()
-        display = str(item.name or qq_str).strip() or qq_str
         if qq_str.startswith("@"):
             return f"{qq_str} "
-        if qq_str.isdigit():
-            escaped_display = display.replace("]", r"\]")
-            return f"[{escaped_display}](tg://user?id={qq_str}) "
+        display = str(item.name or "").strip()
+        if display.startswith("@"):
+            return f"{display} "
+        if display and " " not in display:
+            return f"@{display} "
+        if qq_str:
+            return f"@{qq_str} "
         return f"@{qq_str} "
 
     @classmethod
@@ -243,23 +260,143 @@ class TelethonEvent(AstrMessageEvent):
         flush_current()
         return packed
 
+    @classmethod
+    def _looks_like_markdown(cls, text: str) -> bool:
+        return any(pattern.search(text) for pattern in cls.MARKDOWN_HINT_PATTERNS)
+
+    @staticmethod
+    def _render_table(node) -> str:
+        rows: list[list[str]] = []
+        for tr in node.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            if cells:
+                rows.append(cells)
+        if not rows:
+            return ""
+
+        column_count = max(len(row) for row in rows)
+        normalized_rows = [row + [""] * (column_count - len(row)) for row in rows]
+        widths = [
+            max(len(row[index]) for row in normalized_rows)
+            for index in range(column_count)
+        ]
+
+        rendered_rows: list[str] = []
+        for index, row in enumerate(normalized_rows):
+            rendered_rows.append(
+                " | ".join(cell.ljust(widths[cell_index]) for cell_index, cell in enumerate(row))
+            )
+            if index == 0 and len(normalized_rows) > 1:
+                rendered_rows.append(
+                    "-+-".join("-" * width for width in widths)
+                )
+        table_text = "\n".join(rendered_rows).rstrip()
+        return f"<pre><code>{html.escape(table_text)}</code></pre>\n"
+
+    @classmethod
+    def _format_markdown_for_telethon_html(cls, text: str) -> str:
+        raw_html = markdown.markdown(
+            text,
+            extensions=["fenced_code", "tables"],
+        )
+        soup = BeautifulSoup(raw_html, "html.parser")
+        block_container_tags = {"ul", "ol", "blockquote"}
+
+        def should_skip_whitespace_text(node) -> bool:
+            return (
+                getattr(node.parent, "name", None) in block_container_tags
+                and not str(node).strip()
+            )
+
+        def is_list_item_paragraph(node) -> bool:
+            return getattr(node.parent, "name", None) == "li"
+
+        def convert(node) -> str:
+            if node.name is None:
+                if should_skip_whitespace_text(node):
+                    return ""
+                return html.escape(str(node))
+
+            tag = node.name
+            if tag == "pre":
+                code_node = node.find("code")
+                code_text = html.escape(node.get_text())
+                language = ""
+                if code_node:
+                    for css_class in code_node.get("class", []):
+                        if css_class.startswith("language-"):
+                            language = css_class[len("language-") :]
+                            break
+                inner_tag = (
+                    f'<code class="{html.escape(language)}">' if language else "<code>"
+                )
+                return f"<pre>{inner_tag}{code_text}</code></pre>"
+            if tag == "table":
+                return cls._render_table(node)
+
+            inner = "".join(convert(child) for child in node.children)
+
+            if tag in ("b", "strong"):
+                return f"<b>{inner}</b>"
+            if tag in ("i", "em"):
+                return f"<i>{inner}</i>"
+            if tag in ("s", "del", "strike"):
+                return f"<s>{inner}</s>"
+            if tag == "u":
+                return f"<u>{inner}</u>"
+            if tag == "code":
+                return f"<code>{inner}</code>"
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                return f"<b>{inner}</b>\n"
+            if tag == "p":
+                if is_list_item_paragraph(node):
+                    return inner
+                return f"{inner}\n"
+            if tag == "br":
+                return "\n"
+            if tag == "hr":
+                return "\n------\n"
+            if tag == "a":
+                href = html.escape(node.get("href", ""))
+                return f'<a href="{href}">{inner}</a>'
+            if tag in ("ul", "ol"):
+                return inner
+            if tag == "li":
+                return f"• {inner.strip()}\n"
+            if tag == "blockquote":
+                return f"<blockquote>{inner.strip()}</blockquote>\n"
+            return inner
+
+        result = "".join(convert(child) for child in soup.children)
+        result = re.sub(r"\n{3,}", "\n\n", result)
+        return result.strip()
+
     async def _send_text_with_action(self, text: str, reply_to: int | None):
         await self.send_typing()
-        try:
+        payload = {
+            "reply_to": reply_to,
+            "link_preview": False,
+        }
+        if not self._looks_like_markdown(text):
             return await self.client.send_message(
                 self.peer,
                 text,
-                reply_to=reply_to,
-                parse_mode="md",
-                link_preview=False,
+                **payload,
+            )
+        try:
+            formatted_text = self._format_markdown_for_telethon_html(text)
+            return await self.client.send_message(
+                self.peer,
+                formatted_text,
+                parse_mode="html",
+                **payload,
             )
         except Exception as e:
-            logger.warning(f"[Telethon] Markdown发送失败，使用普通文本: {e!s}")
+            logger.warning(f"[Telethon] Markdown转HTML发送失败，使用普通文本: {e!s}")
         return await self.client.send_message(
             self.peer,
             text,
-            reply_to=reply_to,
-            link_preview=False,
+            **payload,
         )
 
     async def react(self, emoji: str) -> None:
