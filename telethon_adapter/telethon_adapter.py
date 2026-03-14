@@ -473,7 +473,7 @@ class TelethonPlatformAdapter(Platform):
             )
             return
 
-        for extra_event in events_list[1:]:
+        for extra_event in events_list:
             if extra_event is trigger_event:
                 continue
             try:

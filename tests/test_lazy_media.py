@@ -87,14 +87,54 @@ def _load_lazy_media_module():
 
 
 class _FakeMessage:
-    def __init__(self, download_path: str) -> None:
+    def __init__(self, download_path) -> None:
         self._download_path = download_path
+        self.download_calls = 0
 
-    async def download_media(self, file: str) -> str:
+    async def download_media(self, file: str):
+        self.download_calls += 1
         return self._download_path
 
 
 class LazyMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ensure_downloaded_reuses_cached_file_path(self):
+        lazy_media = _load_lazy_media_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_path = os.path.join(temp_dir, "photo.jpg")
+            Path(original_path).write_bytes(b"jpg")
+            message = _FakeMessage(original_path)
+            downloader = lazy_media.TelethonLazyMedia(
+                msg=message,
+                temp_dir_getter=lambda: temp_dir,
+                register_temp_file=lambda path: None,
+                fallback_name="photo.jpg",
+            )
+
+            first = await downloader.ensure_downloaded()
+            second = await downloader.ensure_downloaded()
+
+        self.assertEqual(first, os.path.abspath(original_path))
+        self.assertEqual(second, os.path.abspath(original_path))
+        self.assertEqual(message.download_calls, 1)
+
+    async def test_ensure_downloaded_writes_bytes_payload_with_fallback_name(self):
+        lazy_media = _load_lazy_media_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            message = _FakeMessage(b"payload")
+            downloader = lazy_media.TelethonLazyMedia(
+                msg=message,
+                temp_dir_getter=lambda: temp_dir,
+                register_temp_file=lambda path: None,
+                fallback_name="payload.bin",
+            )
+
+            result = await downloader.ensure_downloaded()
+
+            self.assertEqual(result, os.path.join(temp_dir, "payload.bin"))
+            self.assertEqual(Path(result).read_bytes(), b"payload")
+
     async def test_record_conversion_registers_original_and_wav_temp_files(self):
         lazy_media = _load_lazy_media_module()
 
@@ -130,6 +170,25 @@ class LazyMediaTests(unittest.IsolatedAsyncioTestCase):
                 set(tracked.keys()),
                 {os.path.abspath(original_path), os.path.abspath(converted_path)},
             )
+
+    async def test_record_conversion_falls_back_to_original_when_converter_missing(self):
+        lazy_media = _load_lazy_media_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_path = os.path.join(temp_dir, "voice.ogg")
+            Path(original_path).write_bytes(b"ogg")
+            downloader = lazy_media.TelethonLazyMedia(
+                msg=_FakeMessage(original_path),
+                temp_dir_getter=lambda: temp_dir,
+                register_temp_file=lambda path: None,
+                fallback_name="voice.ogg",
+            )
+            record = lazy_media.LazyRecord(downloader=downloader)
+
+            with patch.object(lazy_media, "convert_audio_to_wav", None):
+                result = await record.convert_to_file_path()
+
+        self.assertEqual(result, os.path.abspath(original_path))
 
 
 if __name__ == "__main__":

@@ -310,6 +310,7 @@ class _FakeClient:
         self.fail_html = fail_html
         self.sent_messages = []
         self.typing_actions = []
+        self.sent_files = []
 
     async def __call__(self, request):
         self.typing_actions.append(request)
@@ -320,8 +321,22 @@ class _FakeClient:
         self.sent_messages.append((peer, text, kwargs))
         return {"peer": peer, "text": text, "kwargs": kwargs}
 
+    async def send_file(self, peer, file, caption=None, reply_to=None):
+        self.sent_files.append((peer, file, caption, reply_to))
+        return {"peer": peer, "file": file, "caption": caption, "reply_to": reply_to}
+
 
 class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
+    def test_split_message_prefers_newline_boundaries(self):
+        module = _load_telethon_event_module()
+        chunk = "a" * 4094 + "\nrest"
+
+        parts = module.TelethonEvent._split_message(chunk)
+
+        self.assertEqual(len(parts), 2)
+        self.assertTrue(parts[0].endswith("\n"))
+        self.assertEqual(parts[1], "rest")
+
     async def test_send_text_uses_html_for_markdown_like_text(self):
         module = _load_telethon_event_module()
         client = _FakeClient()
@@ -384,6 +399,35 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(module.TelethonEvent._format_at_text(At(qq="alice", name="alice")), "@alice ")
         self.assertEqual(module.TelethonEvent._format_at_text(At(qq="123456", name="Alice")), "@Alice ")
         self.assertEqual(module.TelethonEvent._format_at_text(At(qq="@bob", name="Bob")), "@bob ")
+
+    async def test_send_splits_long_plain_text_and_preserves_reply_to(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        reply_type = sys.modules["astrbot.api.message_components"].Reply
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        long_text = "x" * 5000
+
+        await event.send(
+            chain_type(
+                [
+                    reply_type(id="77"),
+                    plain_type(text=long_text),
+                ]
+            )
+        )
+
+        self.assertEqual(len(client.sent_messages), 2)
+        self.assertTrue(
+            all(
+                len(text) <= module.TelethonEvent.MAX_MESSAGE_LENGTH
+                for _, text, _ in client.sent_messages
+            )
+        )
+        self.assertEqual(client.sent_messages[0][2]["reply_to"], 77)
+        self.assertEqual(client.sent_messages[1][2]["reply_to"], 77)
+        self.assertEqual("".join(text for _, text, _ in client.sent_messages), long_text)
 
 
 if __name__ == "__main__":

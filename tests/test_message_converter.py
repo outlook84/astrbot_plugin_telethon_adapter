@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -201,6 +202,7 @@ class _FakeMessage:
         media=None,
         photo=None,
         document=None,
+        reply_message=None,
     ) -> None:
         self.id = message_id
         self.raw_text = raw_text
@@ -209,6 +211,43 @@ class _FakeMessage:
         self.photo = photo
         self.document = document
         self.reply_to = None
+        self._reply_message = reply_message
+
+    async def get_reply_message(self):
+        if isinstance(self._reply_message, Exception):
+            raise self._reply_message
+        return self._reply_message
+
+
+class _FakeReplyMessage(_FakeMessage):
+    def __init__(
+        self,
+        message_id: int,
+        sender,
+        raw_text: str = "",
+        entities=None,
+        media=None,
+        photo=None,
+        document=None,
+        chat_id="100",
+        is_private=False,
+        date=None,
+    ) -> None:
+        super().__init__(
+            message_id,
+            raw_text=raw_text,
+            entities=entities,
+            media=media,
+            photo=photo,
+            document=document,
+        )
+        self._sender = sender
+        self.chat_id = chat_id
+        self.is_private = is_private
+        self.date = date or datetime.fromtimestamp(1700000000)
+
+    async def get_sender(self):
+        return self._sender
 
 
 class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
@@ -251,6 +290,47 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(components[1].qq, "42")
         self.assertEqual(components[1].name, "bob")
 
+    def test_parse_text_components_uses_utf16_offsets_for_emoji_prefix(self):
+        module = _load_message_converter_module()
+        entity_type = sys.modules["telethon.tl.types"].MessageEntityTextUrl
+        entity = entity_type()
+        entity.offset = 6
+        entity.length = 4
+        entity.url = "tg://user?id=84"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+            components = converter.parse_text_components("hi 😀 @bob", [entity])
+
+        self.assertEqual(len(components), 2)
+        self.assertEqual(type(components[0]).__name__, "Plain")
+        self.assertEqual(components[0].text, "hi 😀 ")
+        self.assertEqual(type(components[1]).__name__, "At")
+        self.assertEqual(components[1].qq, "84")
+        self.assertEqual(components[1].name, "bob")
+
+    def test_strip_prefix_from_components_handles_split_plain_segments(self):
+        module = _load_message_converter_module()
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        at_type = sys.modules["astrbot.api.message_components"].At
+
+        components = [
+            plain_type(text="-a"),
+            plain_type(text="str hello"),
+            at_type(qq="42", name="bob"),
+        ]
+
+        result = module.TelethonMessageConverter.strip_prefix_from_components(
+            components,
+            "-astr",
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(type(result[0]).__name__, "Plain")
+        self.assertEqual(result[0].text, "hello")
+        self.assertEqual(type(result[1]).__name__, "At")
+        self.assertEqual(result[1].qq, "42")
+
     async def test_parse_media_components_maps_audio_document(self):
         module = _load_message_converter_module()
         tl_types = sys.modules["telethon.tl.types"]
@@ -291,6 +371,43 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
             components = await converter.parse_media_components(msg)
 
         self.assertEqual(components, [])
+
+    async def test_convert_message_builds_reply_component_from_replied_message(self):
+        module = _load_message_converter_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+            reply_sender = _FakeSender(456, username="bob")
+            reply_message = _FakeReplyMessage(
+                99,
+                sender=reply_sender,
+                raw_text="quoted text",
+                chat_id="100",
+            )
+            message = _FakeMessage(
+                4,
+                raw_text="-astr ack",
+                reply_message=reply_message,
+            )
+            message.reply_to = types.SimpleNamespace(reply_to_msg_id=99)
+            event = _FakeEvent(
+                message,
+                _FakeSender(123, username="alice"),
+            )
+
+            result = await converter.convert_message(event)
+
+        self.assertEqual(type(result.message[0]).__name__, "At")
+        self.assertEqual(type(result.message[1]).__name__, "Reply")
+        self.assertEqual(result.message[1].id, "99")
+        self.assertEqual(result.message[1].sender_id, "456")
+        self.assertEqual(result.message[1].sender_nickname, "bob")
+        self.assertEqual(result.message[1].message_str, "quoted text")
+        self.assertEqual(len(result.message[1].chain), 1)
+        self.assertEqual(type(result.message[1].chain[0]).__name__, "Plain")
+        self.assertEqual(result.message[1].chain[0].text, "quoted text")
+        self.assertEqual(type(result.message[2]).__name__, "Plain")
+        self.assertEqual(result.message[2].text, "ack")
 
 
 if __name__ == "__main__":

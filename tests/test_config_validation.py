@@ -1,6 +1,8 @@
 import asyncio
 import importlib.util
+import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -330,6 +332,164 @@ class ConfigValidationTests(unittest.TestCase):
         )
 
         adapter._validate_config()
+
+    def test_build_client_kwargs_supports_socks5_proxy_tuple(self):
+        module = _load_adapter_module()
+        module.ProxyType = types.SimpleNamespace(
+            SOCKS5="SOCKS5",
+            SOCKS4="SOCKS4",
+            HTTP="HTTP",
+        )
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "proxy_type": "socks5",
+                "proxy_host": "127.0.0.1",
+                "proxy_port": "1080",
+                "proxy_rdns": True,
+                "proxy_username": "user",
+                "proxy_password": "pass",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        kwargs = adapter._build_client_kwargs()
+
+        self.assertEqual(
+            kwargs,
+            {
+                "proxy": (
+                    "SOCKS5",
+                    "127.0.0.1",
+                    1080,
+                    True,
+                    "user",
+                    "pass",
+                )
+            },
+        )
+
+    def test_build_client_kwargs_supports_mtproto_proxy_tuple(self):
+        module = _load_adapter_module()
+        mtproto_connection = object()
+        module.connection.ConnectionTcpMTProxyRandomizedIntermediate = mtproto_connection
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "proxy_type": "mtproto",
+                "proxy_host": "127.0.0.1",
+                "proxy_port": "443",
+                "proxy_secret": "deadbeef",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        kwargs = adapter._build_client_kwargs()
+
+        self.assertEqual(kwargs["connection"], mtproto_connection)
+        self.assertEqual(kwargs["proxy"], ("127.0.0.1", 443, "deadbeef"))
+
+
+class AdapterBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_grouped_message_merges_items_and_uses_prefixed_trigger(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "trigger_prefix": "-astr",
+            },
+            {},
+            asyncio.Queue(),
+        )
+        converted_calls = []
+        committed = []
+
+        def make_abm(message_id: str, message_str: str, parts: list[str]):
+            return types.SimpleNamespace(
+                message_id=message_id,
+                message_str=message_str,
+                message=list(parts),
+                sender=types.SimpleNamespace(user_id="42", nickname="alice"),
+                session_id="100",
+            )
+
+        async def fake_convert_message(event, include_reply=True):
+            converted_calls.append((event.message.id, include_reply))
+            if event.message.id == 11:
+                return make_abm("11", "caption", ["head"])
+            return make_abm(str(event.message.id), "", [f"part-{event.message.id}"])
+
+        adapter._convert_message = fake_convert_message
+        adapter._commit_abm = committed.append
+
+        event1 = types.SimpleNamespace(
+            chat_id="100",
+            sender_id="42",
+            message=types.SimpleNamespace(id=10, raw_text="", reply_to=None),
+        )
+        event2 = types.SimpleNamespace(
+            chat_id="100",
+            sender_id="42",
+            message=types.SimpleNamespace(id=11, raw_text="-astr caption", reply_to=None),
+        )
+        adapter._media_group_cache[("100", 999)] = {
+            "created_at": 0.0,
+            "items": [event1, event2],
+            "task": None,
+        }
+
+        await adapter._process_grouped_message(("100", 999), delay=0)
+
+        self.assertEqual(converted_calls, [(11, True), (10, False)])
+        self.assertEqual(len(committed), 1)
+        self.assertEqual(committed[0].message_str, "caption")
+        self.assertEqual(committed[0].message, ["head", "part-10"])
+
+    async def test_cleanup_expired_temp_files_removes_expired_entries_and_empty_dir(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expired = os.path.join(temp_dir, "expired.bin")
+            alive = os.path.join(temp_dir, "alive.bin")
+            Path(expired).write_bytes(b"expired")
+            Path(alive).write_bytes(b"alive")
+            adapter._media_temp_dir = temp_dir
+            adapter._downloaded_temp_files = {
+                os.path.abspath(expired): 0.0,
+                os.path.abspath(alive): asyncio.get_running_loop().time() + 60,
+            }
+
+            await adapter._cleanup_expired_temp_files(force=False)
+
+            self.assertFalse(os.path.exists(expired))
+            self.assertTrue(os.path.exists(alive))
+            self.assertEqual(
+                adapter._downloaded_temp_files,
+                {os.path.abspath(alive): adapter._downloaded_temp_files[os.path.abspath(alive)]},
+            )
+
+            await adapter._cleanup_expired_temp_files(force=True)
+
+            self.assertFalse(os.path.exists(alive))
+            self.assertEqual(adapter._downloaded_temp_files, {})
+            self.assertFalse(os.path.exists(temp_dir))
 
 
 if __name__ == "__main__":
