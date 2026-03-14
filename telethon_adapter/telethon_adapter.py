@@ -9,11 +9,8 @@ from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
-from astrbot.api.message_components import At, File, Image, Location, Plain, Record, Reply, Video
 from astrbot.api.platform import (
     AstrBotMessage,
-    MessageMember,
-    MessageType,
     Platform,
     PlatformMetadata,
     register_platform_adapter,
@@ -32,139 +29,17 @@ except Exception:
 from telethon import TelegramClient, events
 from telethon.network import connection
 from telethon.sessions import StringSession
-from telethon.tl.types import (
-    DocumentAttributeAudio,
-    DocumentAttributeFilename,
-    DocumentAttributeSticker,
-    DocumentAttributeVideo,
-    GeoPointEmpty,
-    MessageEntityMention,
-    MessageEntityMentionName,
-    MessageEntityTextUrl,
-    MessageMediaContact,
-    MessageMediaGeo,
-    MessageMediaGeoLive,
+from .config import (
+    DEFAULT_CONFIG_TEMPLATE,
+    TELETHON_CONFIG_METADATA,
+    apply_config,
+    config_error,
+    validate_config,
 )
-
-from .lazy_media import LazyFile, LazyImage, LazyRecord, LazyVideo, TelethonLazyMedia
+from .message_converter import TelethonMessageConverter
 from .telethon_event import TelethonEvent
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-
-
-TELETHON_CONFIG_METADATA = {
-    "api_id": {
-        "description": "Telegram API ID",
-        "type": "int",
-        "hint": "在 my.telegram.org 申请得到的 API ID。",
-    },
-    "api_hash": {
-        "description": "Telegram API Hash",
-        "type": "string",
-        "hint": "在 my.telegram.org 申请得到的 API Hash。",
-    },
-    "session_string": {
-        "description": "Telethon StringSession",
-        "type": "text",
-        "hint": "先通过 scripts/generate_session.py 交互登录，再把输出的 StringSession 填到这里。",
-    },
-    "id": {
-        "description": "适配器 ID",
-        "type": "string",
-        "hint": "平台实例唯一标识，用于区分多个 Telegram 适配器实例。",
-    },
-    "trigger_prefix": {
-        "description": "触发前缀",
-        "type": "string",
-        "hint": "仅处理以此前缀开头的消息。留空表示处理所有消息。",
-    },
-    "ignore_self_messages": {
-        "description": "忽略自身发送者消息",
-        "type": "bool",
-        "hint": "开启后，不处理 sender_id 等于当前账号 ID 的消息。",
-    },
-    "download_incoming_media": {
-        "description": "下载入站媒体",
-        "type": "bool",
-        "hint": "关闭后，不下载收到的图片、文件、音视频附件。",
-    },
-    "incoming_media_ttl_seconds": {
-        "description": "入站媒体缓存 TTL",
-        "type": "float",
-        "hint": "媒体下载到本地后保留的秒数。设为 0 或负数表示仅在适配器退出时清理。",
-    },
-    "log_processed_messages_only": {
-        "description": "仅记录已处理消息",
-        "type": "bool",
-        "hint": "开启后，只记录真正提交给 AstrBot 处理的消息。",
-    },
-    "telethon_media_group_timeout": {
-        "description": "媒体组聚合延迟",
-        "type": "float",
-        "hint": "媒体组防抖等待时间，单位秒。",
-    },
-    "telethon_media_group_max_wait": {
-        "description": "媒体组最大等待时间",
-        "type": "float",
-        "hint": "媒体组聚合的最长等待时间，单位秒。",
-    },
-    "proxy_type": {
-        "description": "代理类型",
-        "type": "string",
-        "hint": "支持 socks5、socks4、http、mtproto。",
-        "options": ["", "socks5", "socks4", "http", "mtproto"],
-        "labels": ["直连", "SOCKS5", "SOCKS4", "HTTP", "MTProto"],
-    },
-    "proxy_host": {
-        "description": "代理主机",
-        "type": "string",
-        "hint": "代理服务器地址，例如 127.0.0.1。",
-    },
-    "proxy_port": {
-        "description": "代理端口",
-        "type": "int",
-        "hint": "代理端口，例如 1080。",
-    },
-    "proxy_username": {
-        "description": "代理用户名",
-        "type": "string",
-        "hint": "SOCKS/HTTP 代理可选用户名。",
-    },
-    "proxy_password": {
-        "description": "代理密码",
-        "type": "string",
-        "hint": "SOCKS/HTTP 代理可选密码。",
-    },
-    "proxy_rdns": {
-        "description": "代理远程 DNS",
-        "type": "bool",
-        "hint": "SOCKS/HTTP 代理是否通过代理端进行域名解析，默认开启。",
-        "invisible": True,
-    },
-    "proxy_secret": {
-        "description": "MTProto Secret",
-        "type": "string",
-        "hint": "仅 MTProto 代理需要填写 secret。",
-    },
-}
-
-
-def _parse_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized == "":
-            return default
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "n", "off"}:
-            return False
-    return default
 
 
 @register_platform_adapter(
@@ -172,25 +47,7 @@ def _parse_bool(value: Any, default: bool) -> bool:
     "Telethon Userbot 适配器",
     logo_path=str(PLUGIN_ROOT / "logo.png"),
     support_streaming_message=False,
-    default_config_tmpl={
-        "api_id": 123456,
-        "api_hash": "your_api_hash",
-        "session_string": "",
-        "id": "telethon_userbot",
-        "trigger_prefix": "-astr",
-        "ignore_self_messages": False,
-        "download_incoming_media": True,
-        "incoming_media_ttl_seconds": 600.0,
-        "log_processed_messages_only": True,
-        "telethon_media_group_timeout": 1.2,
-        "telethon_media_group_max_wait": 8.0,
-        "proxy_type": "",
-        "proxy_host": "",
-        "proxy_port": 0,
-        "proxy_username": "",
-        "proxy_password": "",
-        "proxy_secret": "",
-    },
+    default_config_tmpl=DEFAULT_CONFIG_TEMPLATE,
     config_metadata=TELETHON_CONFIG_METADATA,
 )
 class TelethonPlatformAdapter(Platform):
@@ -203,37 +60,7 @@ class TelethonPlatformAdapter(Platform):
         super().__init__(platform_config, event_queue)
         self.settings = platform_settings
 
-        self.api_id = int(self.config.get("api_id", 0))
-        self.api_hash = str(self.config.get("api_hash", "")).strip()
-        self.session_string = str(self.config.get("session_string", "")).strip()
-        self.trigger_prefix = str(self.config.get("trigger_prefix", "") or "")
-        self.ignore_self_messages = _parse_bool(
-            self.config.get("ignore_self_messages"), False
-        )
-        self.download_incoming_media = _parse_bool(
-            self.config.get("download_incoming_media"), True
-        )
-        self.incoming_media_ttl_seconds = float(
-            self.config.get("incoming_media_ttl_seconds", 600.0)
-        )
-        self.log_processed_messages_only = _parse_bool(
-            self.config.get("log_processed_messages_only"), True
-        )
-        self.media_group_timeout = float(
-            self.config.get("telethon_media_group_timeout", 1.2)
-        )
-        self.media_group_max_wait = float(
-            self.config.get("telethon_media_group_max_wait", 8.0)
-        )
-        self.proxy_type = str(self.config.get("proxy_type", "") or "").strip().lower()
-        if self.proxy_type == "mtproxy":
-            self.proxy_type = "mtproto"
-        self.proxy_host = str(self.config.get("proxy_host", "") or "").strip()
-        self.proxy_port = int(self.config.get("proxy_port", 0) or 0)
-        self.proxy_username = str(self.config.get("proxy_username", "") or "").strip()
-        self.proxy_password = str(self.config.get("proxy_password", "") or "")
-        self.proxy_rdns = _parse_bool(self.config.get("proxy_rdns"), True)
-        self.proxy_secret = str(self.config.get("proxy_secret", "") or "").strip()
+        apply_config(self)
 
         self.client: TelegramClient | None = None
         self.self_id = ""
@@ -246,6 +73,7 @@ class TelethonPlatformAdapter(Platform):
         self._recent_event_keys_cleanup_at = 0.0
         self._downloaded_temp_files: dict[str, float] = {}
         self._media_temp_dir = self._build_media_temp_dir()
+        self._message_converter = TelethonMessageConverter(self)
 
     def meta(self) -> PlatformMetadata:
         adapter_id = str(self.config.get("id") or "telethon_userbot")
@@ -259,12 +87,7 @@ class TelethonPlatformAdapter(Platform):
         )
 
     async def run(self):
-        if not self.api_id or not self.api_hash:
-            raise ValueError("[Telethon] 缺少 api_id 或 api_hash")
-        if not self.session_string:
-            raise ValueError(
-                "[Telethon] 缺少 session_string。请先生成 Telethon StringSession。"
-            )
+        validate_config(self)
 
         client_kwargs = self._build_client_kwargs()
         self.client = TelegramClient(
@@ -440,6 +263,12 @@ class TelethonPlatformAdapter(Platform):
         raise ValueError(
             "[Telethon] 不支持的 proxy_type。可选值: socks5, socks4, http, mtproto"
         )
+
+    def _config_error(self, field_name: str, current_value: Any, suggestion: str) -> ValueError:
+        return config_error(field_name, current_value, suggestion)
+
+    def _validate_config(self) -> None:
+        validate_config(self)
 
     def _log_unprocessed(self, message: str, *args: Any) -> None:
         if not self.log_processed_messages_only:
@@ -710,365 +539,4 @@ class TelethonPlatformAdapter(Platform):
         event: events.NewMessage.Event,
         include_reply: bool = True,
     ) -> AstrBotMessage:
-        return await self._convert_telethon_message(
-            msg=event.message,
-            sender=await event.get_sender(),
-            chat_id=str(event.chat_id),
-            is_private=bool(getattr(event, "is_private", False)),
-            include_reply=include_reply,
-            strip_trigger_prefix=True,
-        )
-
-    async def _convert_telethon_message(
-        self,
-        msg: Any,
-        sender: Any,
-        chat_id: str,
-        is_private: bool,
-        include_reply: bool,
-        strip_trigger_prefix: bool,
-    ) -> AstrBotMessage:
-        sender_name = (
-            getattr(sender, "username", None)
-            or " ".join(
-                x for x in [getattr(sender, "first_name", ""), getattr(sender, "last_name", "")] if x
-            ).strip()
-            or getattr(sender, "title", None)
-            or str(getattr(sender, "id", "unknown"))
-        )
-
-        message = AstrBotMessage()
-        message.session_id = chat_id
-        message.message_id = str(msg.id)
-        message.self_id = self.self_id
-        message.raw_message = msg
-        message.sender = MessageMember(user_id=str(getattr(sender, "id", "0")), nickname=sender_name)
-        message.message_str = msg.raw_text or ""
-        message.message = []
-        trigger_prefix_matched = False
-        if (
-            strip_trigger_prefix
-            and self.trigger_prefix
-            and message.message_str.startswith(self.trigger_prefix)
-        ):
-            message.message_str = message.message_str[len(self.trigger_prefix) :].lstrip()
-            trigger_prefix_matched = True
-
-        if is_private:
-            message.type = MessageType.FRIEND_MESSAGE
-        else:
-            message.type = MessageType.GROUP_MESSAGE
-            message.group_id = chat_id
-            if trigger_prefix_matched:
-                message.message.append(
-                    At(
-                        qq=self.self_id,
-                        name=self.self_username or self.self_id,
-                    )
-                )
-
-        if include_reply and msg.reply_to and getattr(msg.reply_to, "reply_to_msg_id", None):
-            reply_id = str(msg.reply_to.reply_to_msg_id)
-            reply_component = Reply(
-                id=reply_id,
-                sender_id=0,
-                sender_nickname="",
-                message_str="",
-                text="",
-                qq=0,
-            )
-            try:
-                reply_msg = await msg.get_reply_message()
-                if reply_msg:
-                    reply_sender = await reply_msg.get_sender()
-                    reply_chat_id = str(getattr(reply_msg, "chat_id", chat_id))
-                    reply_is_private = bool(getattr(reply_msg, "is_private", is_private))
-                    reply_abm = await self._convert_telethon_message(
-                        msg=reply_msg,
-                        sender=reply_sender,
-                        chat_id=reply_chat_id,
-                        is_private=reply_is_private,
-                        include_reply=False,
-                        strip_trigger_prefix=False,
-                    )
-                    reply_component = Reply(
-                        id=reply_abm.message_id,
-                        chain=reply_abm.message,
-                        sender_id=reply_abm.sender.user_id,
-                        sender_nickname=reply_abm.sender.nickname,
-                        time=int(getattr(getattr(reply_msg, "date", None), "timestamp", lambda: 0)()),
-                        message_str=reply_abm.message_str,
-                        text=reply_abm.message_str,
-                        qq=reply_abm.sender.user_id,
-                    )
-            except Exception:
-                logger.exception("[Telethon] 获取引用消息失败")
-            message.message.append(
-                reply_component
-            )
-
-        text_components = self._parse_text_components(
-            msg.raw_text or "",
-            getattr(msg, "entities", None),
-        )
-        if strip_trigger_prefix and self.trigger_prefix:
-            text_components = self._strip_prefix_from_components(
-                text_components,
-                self.trigger_prefix,
-            )
-        message.message.extend(text_components)
-
-        if msg.media:
-            media_components = await self._parse_media_components(msg)
-            message.message.extend(media_components)
-            if not message.message_str and media_components:
-                message.message_str = "[媒体消息]"
-
-        return message
-
-    @staticmethod
-    def _strip_prefix_from_components(
-        components: list[Any],
-        prefix: str,
-    ) -> list[Any]:
-        if not prefix:
-            return components
-
-        remaining_prefix = prefix
-        for component in components:
-            if not remaining_prefix:
-                break
-            if not isinstance(component, Plain):
-                break
-
-            text = component.text or ""
-            if not text:
-                continue
-            if text.startswith(remaining_prefix):
-                component.text = text[len(remaining_prefix) :].lstrip()
-                remaining_prefix = ""
-                break
-            if remaining_prefix.startswith(text):
-                remaining_prefix = remaining_prefix[len(text) :]
-                component.text = ""
-                continue
-            break
-
-        return [
-            component
-            for component in components
-            if not isinstance(component, Plain) or component.text
-        ]
-
-    def _parse_text_components(
-        self,
-        text: str,
-        entities: list[Any] | None,
-    ) -> list[Any]:
-        if not text:
-            return []
-        if not entities:
-            return [Plain(text=text)]
-
-        components: list[Any] = []
-        cursor = 0
-        sorted_entities = sorted(
-            entities,
-            key=lambda e: int(getattr(e, "offset", 0)),
-        )
-        for entity in sorted_entities:
-            offset = int(getattr(entity, "offset", 0))
-            length = int(getattr(entity, "length", 0))
-            if length <= 0:
-                continue
-            offset = max(0, offset)
-            py_offset, py_end = self._utf16_span_to_py_span(text, offset, length)
-            end = min(len(text), py_end)
-            offset = min(len(text), py_offset)
-            if end <= cursor:
-                continue
-            if offset > cursor:
-                components.append(Plain(text=text[cursor:offset]))
-
-            entity_text = text[offset:end]
-            mention = self._entity_to_at(entity, entity_text)
-            if mention:
-                components.append(mention)
-            elif isinstance(entity, MessageEntityTextUrl):
-                url = str(getattr(entity, "url", "") or "").strip()
-                if url:
-                    display = entity_text.strip()
-                    if display and display != url:
-                        components.append(Plain(text=f"{display} ({url})"))
-                    else:
-                        components.append(Plain(text=url))
-                else:
-                    components.append(Plain(text=entity_text))
-            else:
-                components.append(Plain(text=entity_text))
-            cursor = end
-
-        if cursor < len(text):
-            components.append(Plain(text=text[cursor:]))
-
-        if not components:
-            components.append(Plain(text=text))
-        return components
-
-    @staticmethod
-    def _utf16_span_to_py_span(
-        text: str,
-        utf16_offset: int,
-        utf16_length: int,
-    ) -> tuple[int, int]:
-        """Convert Telegram UTF-16 entity offsets to Python string indices."""
-        if not text:
-            return 0, 0
-
-        utf16_end = max(utf16_offset, utf16_offset + utf16_length)
-        current_utf16 = 0
-        start_index: int | None = None
-        end_index: int | None = None
-
-        for index, char in enumerate(text):
-            if start_index is None and current_utf16 >= utf16_offset:
-                start_index = index
-            if end_index is None and current_utf16 >= utf16_end:
-                end_index = index
-                break
-
-            current_utf16 += len(char.encode("utf-16-le")) // 2
-
-            if start_index is None and current_utf16 >= utf16_offset:
-                start_index = index + 1
-            if end_index is None and current_utf16 >= utf16_end:
-                end_index = index + 1
-                break
-
-        if start_index is None:
-            start_index = len(text)
-        if end_index is None:
-            end_index = len(text)
-
-        return start_index, max(start_index, end_index)
-
-    def _entity_to_at(self, entity: Any, entity_text: str) -> At | None:
-        cleaned = entity_text.strip()
-        if isinstance(entity, MessageEntityMention):
-            username = cleaned.lstrip("@")
-            if username:
-                if (
-                    self.self_id
-                    and self.self_username
-                    and username.lower() == self.self_username
-                ):
-                    return At(qq=self.self_id, name=username)
-                return At(qq=username, name=username)
-            return None
-
-        if isinstance(entity, MessageEntityMentionName):
-            user_id = str(getattr(entity, "user_id", "")).strip()
-            if user_id:
-                display = cleaned.lstrip("@") or user_id
-                return At(qq=user_id, name=display)
-            return None
-
-        if isinstance(entity, MessageEntityTextUrl):
-            url = str(getattr(entity, "url", "") or "")
-            match = re.search(r"tg://user\?id=(\d+)", url)
-            if match:
-                user_id = match.group(1)
-                display = cleaned.lstrip("@") or user_id
-                return At(qq=user_id, name=display)
-        return None
-
-    async def _parse_media_components(self, msg: Any) -> list[Any]:
-        media = msg.media
-
-        if isinstance(media, MessageMediaContact):
-            first_name = str(getattr(media, "first_name", "") or "").strip()
-            last_name = str(getattr(media, "last_name", "") or "").strip()
-            full_name = " ".join(x for x in [first_name, last_name] if x).strip()
-            phone_number = str(getattr(media, "phone_number", "") or "").strip()
-            user_id = str(getattr(media, "user_id", "") or "").strip()
-            text = f"[联系人] {full_name}".strip()
-            if phone_number:
-                text += f" {phone_number}"
-            if user_id and user_id != "0":
-                text += f" (id:{user_id})"
-            return [Plain(text=text)]
-
-        if isinstance(media, (MessageMediaGeo, MessageMediaGeoLive)):
-            geo = getattr(media, "geo", None)
-            if geo and not isinstance(geo, GeoPointEmpty):
-                lat = float(getattr(geo, "lat", 0.0))
-                lon = float(getattr(geo, "long", 0.0))
-                return [
-                    Location(lat=lat, lon=lon, title="Location", content=f"{lat},{lon}"),
-                    Plain(text=f"[位置] {lat},{lon}"),
-                ]
-
-        if not self.download_incoming_media:
-            return []
-
-        components: list[Any] = []
-        file_name = self._guess_media_name(msg)
-        lazy_media = TelethonLazyMedia(
-            msg=msg,
-            temp_dir_getter=self._get_media_temp_dir,
-            register_temp_file=self._register_temp_file,
-            fallback_name=file_name,
-        )
-
-        if msg.photo:
-            components.append(LazyImage(downloader=lazy_media))
-            return components
-
-        if msg.document:
-            mime_type = getattr(msg.document, "mime_type", "") or ""
-            attrs = getattr(msg.document, "attributes", []) or []
-            is_video = any(isinstance(a, DocumentAttributeVideo) for a in attrs)
-            is_audio = any(isinstance(a, DocumentAttributeAudio) for a in attrs)
-            sticker_attr = next(
-                (a for a in attrs if isinstance(a, DocumentAttributeSticker)),
-                None,
-            )
-
-            if sticker_attr:
-                sticker_emoji = str(getattr(sticker_attr, "alt", "") or "").strip()
-                components.append(LazyImage(downloader=lazy_media))
-                components.append(
-                    Plain(text=f"[贴纸] {sticker_emoji}" if sticker_emoji else "[贴纸]")
-                )
-                return components
-
-            if is_video or mime_type.startswith("video/"):
-                components.append(LazyVideo(downloader=lazy_media))
-            elif is_audio or mime_type.startswith("audio/"):
-                components.append(LazyRecord(downloader=lazy_media))
-                components.append(LazyFile(name=file_name, downloader=lazy_media))
-                components.append(Plain(text=f"[音频] {file_name}"))
-            else:
-                components.append(LazyFile(name=file_name, downloader=lazy_media))
-            return components
-
-        components.append(LazyFile(name=file_name, downloader=lazy_media))
-        return components
-
-    @staticmethod
-    def _guess_media_name(msg: Any) -> str:
-        if getattr(msg, "file", None) and getattr(msg.file, "name", None):
-            return str(msg.file.name)
-
-        attrs = getattr(getattr(msg, "document", None), "attributes", []) or []
-        for attr in attrs:
-            if isinstance(attr, DocumentAttributeFilename):
-                file_name = str(getattr(attr, "file_name", "") or "").strip()
-                if file_name:
-                    return file_name
-
-        if getattr(msg, "photo", None):
-            return f"telethon_photo_{getattr(msg, 'id', 'unknown')}.jpg"
-        if getattr(msg, "document", None):
-            return f"telethon_media_{getattr(msg, 'id', 'unknown')}.bin"
-        return f"telethon_file_{getattr(msg, 'id', 'unknown')}.bin"
+        return await self._message_converter.convert_message(event, include_reply)
