@@ -10,7 +10,7 @@
 - 长文本自动按 Telegram 上限分片发送
 - 支持引用回复（`Reply` 消息段）
 - 提供 `tg profile` 命令，用于获取用户/群组/频道资料
-- 提供 `tg status` 命令，用于查看当前 AstrBot 进程状态
+- 提供 `tg status` 命令，用于查看当前 AstrBot 状态
 
 ## 注意事项
 
@@ -76,7 +76,7 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `proxy_password`: SOCKS/HTTP 代理密码，可选
 - `proxy_secret`: 仅 `mtproto` 代理需要填写
 
-## Telethon 扩展命令
+## 扩展命令
 
 `tg profile` 用法：
 
@@ -101,7 +101,10 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 
 `tg status` 会返回：
 
-- 插件版本
-- 当前 AstrBot 进程运行时长
+- 主机平台
+- Python / AstrBot / Telethon / 插件版本
+- 当前 Telegram 连接的数据中心
+- 当前适配器 ID
 - 系统 CPU / 内存 / Swap 占用
 - 当前 AstrBot 进程 CPU / 内存占用
+- 当前进程运行时长

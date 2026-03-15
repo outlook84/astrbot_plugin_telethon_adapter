@@ -20,7 +20,7 @@ class TelethonAdapterPlugin(Star):
         super().__init__(context)
         self.context = context
         self._profile_service = TelethonProfileService()
-        self._status_service = TelethonStatusService()
+        self._status_service = TelethonStatusService(context)
         self._sender = TelethonSender()
 
     @filter.command_group("tg")
@@ -72,7 +72,7 @@ class TelethonAdapterPlugin(Star):
             return
 
         try:
-            status_text = await self._status_service.build_status_text()
+            status_text = await self._status_service.build_status_text(event)
         except Exception as exc:
             logger.exception("[Telethon] 获取 status 失败")
             event.set_result(f"获取状态失败: {exc}")

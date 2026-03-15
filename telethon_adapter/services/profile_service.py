@@ -13,6 +13,8 @@ from astrbot.api.message_components import At
 from telethon import functions
 from telethon.tl import types
 
+from .data_center import format_data_center
+
 
 def _type_tuple(*names: str) -> tuple[type, ...]:
     resolved = [getattr(types, name, None) for name in names]
@@ -1052,22 +1054,7 @@ class TelethonProfileService:
 
     @staticmethod
     def _format_data_center(value: Any) -> str | None:
-        dc_map = {
-            1: "🇺🇸 美国迈阿密（DC1）",
-            2: "🇳🇱 荷兰阿姆斯特丹（DC2）",
-            3: "🇺🇸 美国迈阿密（DC3）",
-            4: "🇳🇱 荷兰阿姆斯特丹（DC4）",
-            5: "🇸🇬 新加坡（DC5）",
-        }
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return None
-        try:
-            dc_id = int(value)
-        except (TypeError, ValueError):
-            return str(value)
-        return dc_map.get(dc_id, f"🌐 未知位置（DC{dc_id}）")
+        return format_data_center(value)
 
     @classmethod
     def _infer_data_center(cls, entity: Any, full: Any | None = None) -> str | None:
