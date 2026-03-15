@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-03-15
+
+### 新增
+
+- 增加 `tg profile`、`tg status`、`tg prune`、`tg selfprune`、`tg youprune` 一组 Telegram 管理命令。
+- `tg profile` 用于查询用户、群组或频道资料。
+- `tg status` 用于查看当前 AstrBot 运行状态。
+- `tg prune` 支持按最近消息或回复锚点批量删除消息；`tg selfprune` 只删除自己的消息；`tg youprune` 只删除指定用户的消息。
+
 ## 0.2.0 - 2026-03-14
 
 ### 新增
