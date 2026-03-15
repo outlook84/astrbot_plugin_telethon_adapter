@@ -43,18 +43,34 @@ class ProfilePayload:
 class TelethonProfileService:
     @staticmethod
     def supports_event(event: Any) -> bool:
+        debug_logging = bool(getattr(event, "telethon_debug_logging", False))
         client = getattr(event, "client", None)
         if client is None:
+            if debug_logging:
+                logger.info("[Telethon][Debug] supports_event: client missing")
             return False
 
         platform_name = str(getattr(getattr(event, "platform_meta", None), "name", "") or "")
         raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
-
+        result = False
         if platform_name == "telegram" and raw_message is not None:
-            return True
-        if raw_message is not None and raw_message.__class__.__module__.startswith("telethon"):
-            return True
-        return hasattr(raw_message, "get_reply_message") or hasattr(raw_message, "peer_id")
+            result = True
+        elif raw_message is not None and raw_message.__class__.__module__.startswith("telethon"):
+            result = True
+        else:
+            result = hasattr(raw_message, "get_reply_message") or hasattr(raw_message, "peer_id")
+
+        if debug_logging:
+            logger.info(
+                "[Telethon][Debug] supports_event: result=%s platform_name=%s "
+                "raw_message_type=%s has_reply=%s has_peer=%s",
+                result,
+                platform_name,
+                type(raw_message).__name__ if raw_message is not None else None,
+                hasattr(raw_message, "get_reply_message"),
+                hasattr(raw_message, "peer_id"),
+            )
+        return result
 
     async def build_profile_payload(
         self,

@@ -38,6 +38,17 @@ class TelethonMessageConverter:
         if not is_private:
             if type(peer).__name__ == "PeerUser":
                 is_private = True
+        if getattr(self.adapter, "debug_logging", False):
+            logger.info(
+                "[Telethon][Debug] convert_message: chat_id=%s sender_id=%s peer_type=%s "
+                "is_private_event=%s is_private_final=%s raw_text=%r",
+                getattr(event, "chat_id", None),
+                getattr(event, "sender_id", None),
+                type(peer).__name__ if peer is not None else None,
+                getattr(event, "is_private", None),
+                is_private,
+                getattr(message, "raw_text", ""),
+            )
         return await self.convert_telethon_message(
             msg=event.message,
             sender=await event.get_sender(),
@@ -179,6 +190,17 @@ class TelethonMessageConverter:
             message.message.extend(media_components)
             if not message.message_str and media_components:
                 message.message_str = "[媒体消息]"
+
+        if getattr(self.adapter, "debug_logging", False):
+            logger.info(
+                "[Telethon][Debug] convert_result: chat_id=%s type=%s session_id=%s "
+                "message_str=%r component_types=%s",
+                chat_id,
+                getattr(message, "type", None),
+                getattr(message, "session_id", None),
+                getattr(message, "message_str", ""),
+                [type(component).__name__ for component in message.message],
+            )
 
         return message
 

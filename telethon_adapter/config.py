@@ -44,6 +44,11 @@ TELETHON_CONFIG_METADATA = {
         "type": "bool",
         "hint": "开启后，只记录真正提交给 AstrBot 处理的消息。",
     },
+    "debug_logging": {
+        "description": "调试日志",
+        "type": "bool",
+        "hint": "开启后，输出更详细的 Telethon 事件转换与命令调试日志。",
+    },
     "telethon_media_group_timeout": {
         "description": "媒体组聚合延迟",
         "type": "float",
@@ -103,6 +108,7 @@ DEFAULT_CONFIG_TEMPLATE = {
     "download_incoming_media": True,
     "incoming_media_ttl_seconds": 600.0,
     "log_processed_messages_only": True,
+    "debug_logging": False,
     "telethon_media_group_timeout": 1.2,
     "telethon_media_group_max_wait": 8.0,
     "proxy_type": "",
@@ -198,6 +204,9 @@ def apply_config(adapter: Any) -> None:
     )
     adapter.log_processed_messages_only = parse_bool(
         adapter.config.get("log_processed_messages_only"), True
+    )
+    adapter.debug_logging = parse_bool(
+        adapter.config.get("debug_logging"), False
     )
     adapter.media_group_timeout = parse_float(
         adapter.config.get("telethon_media_group_timeout"),

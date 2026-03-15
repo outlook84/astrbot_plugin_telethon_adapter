@@ -290,6 +290,22 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(adapter.media_group_max_wait, 8.0)
         self.assertEqual(adapter.proxy_port, 0)
         self.assertEqual(adapter.proxy_type, "mtproto")
+        self.assertFalse(adapter.debug_logging)
+
+    def test_init_parses_debug_logging_flag(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "debug_logging": "true",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        self.assertTrue(adapter.debug_logging)
 
     def test_validate_config_reports_invalid_required_field(self):
         module = _load_adapter_module()

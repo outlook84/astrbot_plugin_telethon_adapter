@@ -305,6 +305,19 @@ class TelethonPlatformAdapter(Platform):
             getattr(event, "is_private", None),
             getattr(event.message, "raw_text", "") if getattr(event, "message", None) else "",
         )
+        if self.debug_logging:
+            peer = getattr(getattr(event, "message", None), "peer_id", None)
+            self._log_unprocessed(
+                "[Telethon][Debug] raw_event: chat_id=%s sender_id=%s peer_type=%s "
+                "msg_id=%s grouped_id=%s out=%s private=%s",
+                getattr(event, "chat_id", None),
+                getattr(event, "sender_id", None),
+                type(peer).__name__ if peer is not None else None,
+                getattr(getattr(event, "message", None), "id", None),
+                getattr(getattr(event, "message", None), "grouped_id", None),
+                getattr(getattr(event, "message", None), "out", None),
+                getattr(event, "is_private", None),
+            )
         grouped_id = getattr(event.message, "grouped_id", None)
         if grouped_id:
             await self._handle_grouped_message(
@@ -342,6 +355,17 @@ class TelethonPlatformAdapter(Platform):
             getattr(getattr(abm, "sender", None), "user_id", None),
             getattr(abm, "message_str", ""),
         )
+        if self.debug_logging:
+            logger.info(
+                "[Telethon][Debug] commit_event: platform_id=%s self_id=%s session_id=%s "
+                "message_id=%s type=%s text=%r",
+                getattr(self.meta(), "id", None),
+                getattr(abm, "self_id", None),
+                getattr(abm, "session_id", None),
+                getattr(abm, "message_id", None),
+                getattr(abm, "type", None),
+                getattr(abm, "message_str", ""),
+            )
         self._commit_abm(abm)
 
     async def _on_raw_event(self, event: events.Raw) -> None:
@@ -381,6 +405,7 @@ class TelethonPlatformAdapter(Platform):
             session_id=abm.session_id,
             client=self.client,
         )
+        message_event.telethon_debug_logging = self.debug_logging
         self.commit_event(message_event)
 
     async def _handle_grouped_message(

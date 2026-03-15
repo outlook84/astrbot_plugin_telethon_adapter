@@ -163,6 +163,7 @@ class _FakeAdapter:
         self.self_id = "999"
         self.self_username = "astrbot"
         self.trigger_prefix = "-astr"
+        self.debug_logging = False
         self.download_incoming_media = download_incoming_media
         self._temp_dir = temp_dir
         self.registered_paths: list[str] = []
@@ -217,6 +218,20 @@ class _FakeMessage:
         if isinstance(self._reply_message, Exception):
             raise self._reply_message
         return self._reply_message
+
+
+class _CapturingLogger:
+    def __init__(self) -> None:
+        self.info_calls: list[tuple[tuple, dict]] = []
+
+    def info(self, *args, **kwargs):
+        self.info_calls.append((args, kwargs))
+
+    def warning(self, *args, **kwargs):
+        return None
+
+    def exception(self, *args, **kwargs):
+        return None
 
 
 class _FakeReplyMessage(_FakeMessage):
@@ -290,6 +305,50 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.message), 1)
         self.assertEqual(type(result.message[0]).__name__, "Plain")
         self.assertEqual(result.message[0].text, "tg status")
+
+    async def test_convert_message_emits_no_debug_logs_when_disabled(self):
+        module = _load_message_converter_module()
+        original_logger = module.logger
+        capturing_logger = _CapturingLogger()
+        module.logger = capturing_logger
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+                event = _FakeEvent(
+                    _FakeMessage(1, raw_text="-astr hello world"),
+                    _FakeSender(123, username="alice"),
+                )
+
+                await converter.convert_message(event)
+        finally:
+            module.logger = original_logger
+
+        self.assertEqual(capturing_logger.info_calls, [])
+
+    async def test_convert_message_emits_debug_logs_when_enabled(self):
+        module = _load_message_converter_module()
+        original_logger = module.logger
+        capturing_logger = _CapturingLogger()
+        module.logger = capturing_logger
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                adapter = _FakeAdapter(temp_dir)
+                adapter.debug_logging = True
+                converter = module.TelethonMessageConverter(adapter)
+                event = _FakeEvent(
+                    _FakeMessage(1, raw_text="-astr hello world"),
+                    _FakeSender(123, username="alice"),
+                )
+
+                await converter.convert_message(event)
+        finally:
+            module.logger = original_logger
+
+        self.assertEqual(len(capturing_logger.info_calls), 2)
+        self.assertIn("[Telethon][Debug] convert_message:", capturing_logger.info_calls[0][0][0])
+        self.assertIn("[Telethon][Debug] convert_result:", capturing_logger.info_calls[1][0][0])
 
     async def test_convert_message_removes_self_mention_from_message_str(self):
         module = _load_message_converter_module()

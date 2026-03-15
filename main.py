@@ -34,6 +34,16 @@ class TelethonAdapterPlugin(Star):
         target: str = "",
     ) -> None:
         """获取 Telegram 用户/群组/频道资料。tg profile [@username|id|t.me 链接]"""
+        if bool(getattr(event, "telethon_debug_logging", False)):
+            logger.info(
+                "[Telethon][Debug] tg_profile: session_id=%s sender_id=%s "
+                "platform_id=%s message_str=%r target=%r",
+                getattr(event, "session_id", None),
+                getattr(event, "get_sender_id", lambda: "")(),
+                getattr(getattr(event, "platform_meta", None), "id", None),
+                getattr(event, "message_str", ""),
+                target,
+            )
         if not self._profile_service.supports_event(event):
             event.set_result("当前事件不来自 Telethon 适配器，无法获取 MTProto 资料。")
             return
@@ -67,6 +77,15 @@ class TelethonAdapterPlugin(Star):
     @tg.command("status")
     async def tg_status(self, event: AstrMessageEvent) -> None:
         """获取当前 AstrBot 进程的运行状态。tg status"""
+        if bool(getattr(event, "telethon_debug_logging", False)):
+            logger.info(
+                "[Telethon][Debug] tg_status: session_id=%s sender_id=%s "
+                "platform_id=%s message_str=%r",
+                getattr(event, "session_id", None),
+                getattr(event, "get_sender_id", lambda: "")(),
+                getattr(getattr(event, "platform_meta", None), "id", None),
+                getattr(event, "message_str", ""),
+            )
         if not self._profile_service.supports_event(event):
             event.set_result("当前事件不来自 Telethon 适配器，无法获取状态信息。")
             return
