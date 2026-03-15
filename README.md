@@ -11,6 +11,7 @@
 - 支持引用回复（`Reply` 消息段）
 - 提供 `tg profile` 命令，用于获取用户/群组/频道资料
 - 提供 `tg status` 命令，用于查看当前 AstrBot 状态
+- 提供 `tg prune` / `tg selfprune` / `tg youprune` 命令，用于批量删除消息
 
 ## 注意事项
 
@@ -18,6 +19,8 @@
 - `session_string` 具备 Telegram 账号完全权限，请妥善保管。
 - 如果 `session_string` 失效，需要重新生成并更新配置。
 - `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”，不要使用“实时分段回复”。
+- 批量删消息属于高风险操作。当前实现默认启用保守限制：所有 `prune` 命令单次最多删除 `200` 条；`selfprune` / `youprune` 最多向前扫描 `1000` 条历史；每 `100` 条删除批次之间增加节流。
+- 删除权限、服务消息限制与 `FloodWait` 由 Telegram/Telethon 决定；即使命令参数正确，也可能因为会话权限或风控而部分成功或失败。
 
 ## 安装
 
@@ -108,3 +111,22 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - 系统 CPU / 内存 / Swap 占用
 - 当前 AstrBot 进程 CPU / 内存占用
 - 当前进程运行时长
+
+批量删除命令：
+
+```text
+-astr tg prune 20
+-astr tg prune
+-astr tg selfprune 20
+-astr tg selfprune
+-astr tg youprune @username 20
+-astr tg youprune 20
+```
+
+批量删除命令说明：
+
+- `tg prune [数量]`：删除当前会话中的最近消息；如果回复某条消息后执行，可省略数量，表示删除“回复锚点”和当前命令之间的消息；单次最多删除 `200` 条。
+- `tg selfprune [数量]`：仅删除自己发出的消息；支持回复锚点模式；最多扫描最近 `1000` 条历史。
+- `tg youprune [目标] [数量]`：仅删除指定用户的消息；目标支持 `@username`、`t.me` 链接、或直接回复目标消息；最多扫描最近 `1000` 条历史。
+- `tg prune` / `tg selfprune` / `tg youprune` 在省略数量时，都要求当前命令是对某条消息的回复。
+- 删除服务消息、无权限删除别人的消息、或命中 `FloodWait` 时，命令可能只完成部分删除。
