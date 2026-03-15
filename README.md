@@ -10,6 +10,7 @@
 - 长文本自动按 Telegram 上限分片发送
 - 支持引用回复（`Reply` 消息段）
 - 提供 `tg profile` 命令，用于获取用户/群组/频道资料
+- 提供 `tg status` 命令，用于查看当前 AstrBot 进程状态
 
 ## 注意事项
 
@@ -91,3 +92,16 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - 回复消息：查询被回复消息的发送者
 - 私聊场景下的当前对话用户
 - 群组 / 频道场景下的当前会话
+
+`tg status` 用法：
+
+```text
+-astr tg status
+```
+
+`tg status` 会返回：
+
+- 插件版本
+- 当前 AstrBot 进程运行时长
+- 系统 CPU / 内存 / Swap 占用
+- 当前 AstrBot 进程 CPU / 内存占用

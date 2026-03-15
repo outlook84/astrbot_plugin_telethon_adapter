@@ -251,7 +251,7 @@ class _FakeReplyMessage(_FakeMessage):
 
 
 class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_convert_message_strips_trigger_prefix_without_adding_group_at(self):
+    async def test_convert_message_strips_trigger_prefix_and_injects_group_at(self):
         module = _load_message_converter_module()
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -266,9 +266,11 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.message_str, "hello world")
         self.assertEqual(result.type, "group")
         self.assertEqual(result.group_id, "100")
-        self.assertEqual(len(result.message), 1)
-        self.assertEqual(type(result.message[0]).__name__, "Plain")
-        self.assertEqual(result.message[0].text, "hello world")
+        self.assertEqual(len(result.message), 2)
+        self.assertEqual(type(result.message[0]).__name__, "At")
+        self.assertEqual(result.message[0].qq, "astrbot")
+        self.assertEqual(type(result.message[1]).__name__, "Plain")
+        self.assertEqual(result.message[1].text, "hello world")
 
     async def test_convert_message_removes_self_mention_from_message_str(self):
         module = _load_message_converter_module()
@@ -470,8 +472,10 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.message[0].chain), 1)
         self.assertEqual(type(result.message[0].chain[0]).__name__, "Plain")
         self.assertEqual(result.message[0].chain[0].text, "quoted text")
-        self.assertEqual(type(result.message[1]).__name__, "Plain")
-        self.assertEqual(result.message[1].text, "ack")
+        self.assertEqual(type(result.message[1]).__name__, "At")
+        self.assertEqual(result.message[1].qq, "astrbot")
+        self.assertEqual(type(result.message[2]).__name__, "Plain")
+        self.assertEqual(result.message[2].text, "ack")
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ class TelethonMessageConverter:
             chat_id=str(event.chat_id),
             is_private=is_private,
             include_reply=include_reply,
-            strip_trigger_prefix=True,
+            strip_trigger_prefix=not is_private,
         )
 
     async def convert_telethon_message(
@@ -81,18 +81,23 @@ class TelethonMessageConverter:
             getattr(msg, "entities", None),
         )
         message.message = []
-        if (
-            strip_trigger_prefix
-            and self.adapter.trigger_prefix
-            and message.message_str.startswith(self.adapter.trigger_prefix)
-        ):
-            message.message_str = message.message_str[len(self.adapter.trigger_prefix) :].lstrip()
-
         if is_private:
             message.type = MessageType.FRIEND_MESSAGE
         else:
             message.type = MessageType.GROUP_MESSAGE
             message.group_id = chat_id
+
+        inject_self_at = False
+        if (
+            not is_private
+            and strip_trigger_prefix
+            and self.adapter.trigger_prefix
+            and message.message_str.startswith(self.adapter.trigger_prefix)
+        ):
+            message.message_str = message.message_str[
+                len(self.adapter.trigger_prefix) :
+            ].lstrip()
+            inject_self_at = True
 
         if include_reply and msg.reply_to and getattr(msg.reply_to, "reply_to_msg_id", None):
             reply_id = str(msg.reply_to.reply_to_msg_id)
@@ -163,6 +168,11 @@ class TelethonMessageConverter:
                 text_components,
                 self.adapter.trigger_prefix,
             )
+        if inject_self_at:
+            text_components = [
+                At(qq=message.self_id, name=message.self_id),
+                *text_components,
+            ]
         message.message.extend(text_components)
 
         if msg.media:

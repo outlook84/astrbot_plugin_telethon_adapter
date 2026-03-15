@@ -10,7 +10,7 @@ from .plugin_info import (
     PLUGIN_VERSION,
 )
 from .telethon_adapter.services.profile_service import TelethonProfileService
-from .telethon_adapter.services import TelethonSender
+from .telethon_adapter.services import TelethonSender, TelethonStatusService
 from .telethon_adapter import TelethonPlatformAdapter  # noqa: F401
 
 
@@ -20,6 +20,7 @@ class TelethonAdapterPlugin(Star):
         super().__init__(context)
         self.context = context
         self._profile_service = TelethonProfileService()
+        self._status_service = TelethonStatusService()
         self._sender = TelethonSender()
 
     @filter.command_group("tg")
@@ -62,3 +63,25 @@ class TelethonAdapterPlugin(Star):
         except Exception as exc:
             logger.exception("[Telethon] 发送 profile 结果失败: target=%r", target)
             event.set_result(f"发送资料失败: {exc}")
+
+    @tg.command("status")
+    async def tg_status(self, event: AstrMessageEvent) -> None:
+        """获取当前 AstrBot 进程的运行状态。tg status"""
+        if not self._profile_service.supports_event(event):
+            event.set_result("当前事件不来自 Telethon 适配器，无法获取状态信息。")
+            return
+
+        try:
+            status_text = await self._status_service.build_status_text()
+        except Exception as exc:
+            logger.exception("[Telethon] 获取 status 失败")
+            event.set_result(f"获取状态失败: {exc}")
+            return
+
+        try:
+            await self._sender.send_html_message(event, status_text)
+        except ValueError:
+            event.set_result(status_text)
+        except Exception as exc:
+            logger.exception("[Telethon] 发送 status 结果失败")
+            event.set_result(f"发送状态失败: {exc}")
