@@ -53,16 +53,136 @@ class TelethonEvent(AstrMessageEvent):
     ) -> None:
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.client = client
-        self.peer = int(session_id)
+        self.peer, self.thread_id = self._parse_session_target(session_id)
+
+    @staticmethod
+    def _parse_session_target(session_id: str) -> tuple[int, int | None]:
+        normalized = str(session_id or "").strip()
+        if not normalized:
+            raise ValueError("session_id is empty")
+        peer_part, separator, thread_part = normalized.partition("#")
+        peer = int(peer_part)
+        if not separator:
+            return peer, None
+        return peer, int(thread_part) if thread_part else None
+
+    def _effective_reply_to(self, reply_to: int | None) -> int | None:
+        if reply_to is not None:
+            return reply_to
+        return self.thread_id
+
+    def _build_reply_to(self, reply_to: int | None) -> Any | None:
+        effective_reply_to = self._effective_reply_to(reply_to)
+        if effective_reply_to is None:
+            return None
+        if self.thread_id is None:
+            return effective_reply_to
+        return types.InputReplyToMessage(
+            reply_to_msg_id=effective_reply_to,
+            top_msg_id=self.thread_id,
+        )
+
+    async def _resolve_input_peer(self) -> Any:
+        get_input_entity = getattr(self.client, "get_input_entity", None)
+        if callable(get_input_entity):
+            return await get_input_entity(self.peer)
+        return self.peer
+
+    async def _parse_formatting_entities(
+        self,
+        text: str,
+        parse_mode: str | None,
+    ) -> tuple[str, Any | None]:
+        if parse_mode is None:
+            return text, None
+        parse_message_text = getattr(self.client, "_parse_message_text", None)
+        if callable(parse_message_text):
+            return await parse_message_text(text, parse_mode)
+        return text, None
+
+    async def _execute_request(self, request: Any, entity: Any) -> Any:
+        result = await self.client(request)
+        get_response_message = getattr(self.client, "_get_response_message", None)
+        if callable(get_response_message):
+            return get_response_message(request, result, entity)
+        return result
+
+    async def _send_text_request(
+        self,
+        text: str,
+        *,
+        parse_mode: str | None,
+        reply_to: int | None,
+        link_preview: bool,
+    ) -> Any:
+        telethon_reply_to = self._build_reply_to(reply_to)
+        if self.thread_id is None:
+            payload = {
+                "reply_to": telethon_reply_to,
+                "link_preview": link_preview,
+            }
+            if parse_mode is not None:
+                payload["parse_mode"] = parse_mode
+            return await self.client.send_message(
+                self.peer,
+                text,
+                **payload,
+            )
+
+        entity = await self._resolve_input_peer()
+        message, entities = await self._parse_formatting_entities(text, parse_mode)
+        request = functions.messages.SendMessageRequest(
+            peer=entity,
+            message=message,
+            entities=entities,
+            no_webpage=not link_preview,
+            reply_to=telethon_reply_to,
+        )
+        return await self._execute_request(request, entity)
+
+    async def _send_media_request(
+        self,
+        path: str,
+        *,
+        caption: str | None,
+        reply_to: int | None,
+    ) -> Any:
+        telethon_reply_to = self._build_reply_to(reply_to)
+        if self.thread_id is None:
+            return await self.client.send_file(
+                self.peer,
+                file=path,
+                caption=caption,
+                reply_to=telethon_reply_to,
+            )
+
+        entity = await self._resolve_input_peer()
+        parsed_caption, msg_entities = await self._parse_formatting_entities(
+            caption or "",
+            None,
+        )
+        file_to_media = getattr(self.client, "_file_to_media", None)
+        if not callable(file_to_media):
+            raise RuntimeError("Telethon client does not expose _file_to_media")
+        _file_handle, media, _is_image = await file_to_media(path)
+        request = functions.messages.SendMediaRequest(
+            peer=entity,
+            media=media,
+            reply_to=telethon_reply_to,
+            message=parsed_caption,
+            entities=msg_entities,
+        )
+        return await self._execute_request(request, entity)
 
     def _message_log_context(self, reply_to: int | None = None) -> dict[str, Any]:
         message_obj = getattr(self, "message_obj", None)
         sender = getattr(message_obj, "sender", None)
         return {
             "chat_id": self.peer,
+            "thread_id": self.thread_id,
             "msg_id": getattr(message_obj, "message_id", None),
             "sender_id": getattr(sender, "user_id", None),
-            "reply_to": reply_to,
+            "reply_to": self._effective_reply_to(reply_to),
         }
 
     async def _send_chat_action(self, action: types.TypeSendMessageAction) -> None:
@@ -71,6 +191,7 @@ class TelethonEvent(AstrMessageEvent):
                 functions.messages.SetTypingRequest(
                     peer=self.peer,
                     action=action,
+                    top_msg_id=self.thread_id,
                 )
             )
         except Exception as e:
@@ -132,19 +253,21 @@ class TelethonEvent(AstrMessageEvent):
         action_name: str,
         fallback_action: types.TypeSendMessageAction,
     ) -> int | None:
+        effective_reply_to = self._effective_reply_to(reply_to)
+        telethon_reply_to = self._build_reply_to(reply_to)
         try:
             async with self._chat_action_scope(action_name, fallback_action):
-                await self.client.send_file(
-                    self.peer,
-                    file=path,
+                await self._send_media_request(
+                    path,
                     caption=caption,
                     reply_to=reply_to,
                 )
         except Exception:
-            context = self._message_log_context(reply_to)
+            context = self._message_log_context(effective_reply_to)
             logger.exception(
-                "[Telethon] Failed to send media: chat_id=%s msg_id=%s sender_id=%s reply_to=%s action=%s path=%s",
+                "[Telethon] Failed to send media: chat_id=%s thread_id=%s msg_id=%s sender_id=%s reply_to=%s action=%s path=%s",
                 context["chat_id"],
+                context["thread_id"],
                 context["msg_id"],
                 context["sender_id"],
                 context["reply_to"],
@@ -452,49 +575,50 @@ class TelethonEvent(AstrMessageEvent):
         self, text: str | list[tuple[str, bool]], reply_to: int | None
     ):
         await self.send_typing()
-        payload = {
-            "reply_to": reply_to,
-            "link_preview": False,
-        }
+        effective_reply_to = self._effective_reply_to(reply_to)
+        telethon_reply_to = self._build_reply_to(reply_to)
         if isinstance(text, list):
             formatted_text = self._render_text_chunk(text)
             if any(is_html for _, is_html in text):
-                return await self.client.send_message(
-                    self.peer,
+                return await self._send_text_request(
                     formatted_text,
                     parse_mode="html",
-                    **payload,
+                    reply_to=reply_to,
+                    link_preview=False,
                 )
             text = "".join(part for part, _ in text)
         if not self._looks_like_markdown(text):
-            return await self.client.send_message(
-                self.peer,
+            return await self._send_text_request(
                 text,
-                **payload,
+                parse_mode=None,
+                reply_to=reply_to,
+                link_preview=False,
             )
         try:
             formatted_text = self._format_markdown_for_telethon_html(text)
-            return await self.client.send_message(
-                self.peer,
+            return await self._send_text_request(
                 formatted_text,
                 parse_mode="html",
-                **payload,
+                reply_to=reply_to,
+                link_preview=False,
             )
         except Exception as e:
-            context = self._message_log_context(reply_to)
+            context = self._message_log_context(effective_reply_to)
             logger.warning(
                 "[Telethon] Failed to convert Markdown to HTML, falling back to plain text: "
-                "chat_id=%s msg_id=%s sender_id=%s reply_to=%s error=%s",
+                "chat_id=%s thread_id=%s msg_id=%s sender_id=%s reply_to=%s error=%s",
                 context["chat_id"],
+                context["thread_id"],
                 context["msg_id"],
                 context["sender_id"],
                 context["reply_to"],
                 e,
             )
-        return await self.client.send_message(
-            self.peer,
+        return await self._send_text_request(
             text,
-            **payload,
+            parse_mode=None,
+            reply_to=reply_to,
+            link_preview=False,
         )
 
     async def react(self, emoji: str) -> None:

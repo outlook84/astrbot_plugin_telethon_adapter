@@ -49,10 +49,13 @@ class TelethonMessageConverter:
                 is_private,
                 getattr(message, "raw_text", ""),
             )
+        chat_id = str(event.chat_id)
+        thread_id = None if is_private else self.extract_thread_id(message)
         return await self.convert_telethon_message(
             msg=event.message,
             sender=await event.get_sender(),
-            chat_id=str(event.chat_id),
+            chat_id=chat_id,
+            session_id=self.build_session_id(chat_id, thread_id, is_private=is_private),
             is_private=is_private,
             include_reply=include_reply,
             strip_trigger_prefix=True,
@@ -63,6 +66,7 @@ class TelethonMessageConverter:
         msg: Any,
         sender: Any,
         chat_id: str,
+        session_id: str,
         is_private: bool,
         include_reply: bool,
         strip_trigger_prefix: bool,
@@ -79,7 +83,7 @@ class TelethonMessageConverter:
         )
 
         message = AstrBotMessage()
-        message.session_id = chat_id
+        message.session_id = session_id
         message.message_id = str(msg.id)
         message.self_id = self.adapter.self_username or self.adapter.self_id
         message.raw_message = msg
@@ -92,7 +96,7 @@ class TelethonMessageConverter:
             message.type = MessageType.FRIEND_MESSAGE
         else:
             message.type = MessageType.GROUP_MESSAGE
-            message.group_id = chat_id
+            message.group_id = session_id
 
         preserve_group_mention_wakeup = not is_private and not self.adapter.trigger_prefix
         if preserve_group_mention_wakeup:
@@ -114,7 +118,13 @@ class TelethonMessageConverter:
             ].lstrip()
             inject_self_at = not is_private
 
-        if include_reply and msg.reply_to and getattr(msg.reply_to, "reply_to_msg_id", None):
+        thread_id = None if is_private else self.extract_thread_id(msg)
+        if (
+            include_reply
+            and msg.reply_to
+            and getattr(msg.reply_to, "reply_to_msg_id", None)
+            and not self._is_topic_root_reply(msg, thread_id)
+        ):
             reply_id = str(msg.reply_to.reply_to_msg_id)
             reply_component = Reply(
                 id=reply_id,
@@ -140,10 +150,16 @@ class TelethonMessageConverter:
                         reply_sender = await reply_msg.get_sender()
                         reply_chat_id = str(getattr(reply_msg, "chat_id", chat_id))
                         reply_is_private = bool(getattr(reply_msg, "is_private", is_private))
+                        reply_thread_id = None if reply_is_private else self.extract_thread_id(reply_msg)
                         reply_abm = await self.convert_telethon_message(
                             msg=reply_msg,
                             sender=reply_sender,
                             chat_id=reply_chat_id,
+                            session_id=self.build_session_id(
+                                reply_chat_id,
+                                reply_thread_id,
+                                is_private=reply_is_private,
+                            ),
                             is_private=reply_is_private,
                             include_reply=False,
                             strip_trigger_prefix=False,
@@ -209,6 +225,67 @@ class TelethonMessageConverter:
             )
 
         return message
+
+    @staticmethod
+    def build_session_id(chat_id: str, thread_id: Any, *, is_private: bool) -> str:
+        if is_private:
+            return chat_id
+        normalized_thread_id = TelethonMessageConverter._normalize_thread_id(thread_id)
+        if normalized_thread_id is None:
+            return chat_id
+        return f"{chat_id}#{normalized_thread_id}"
+
+    @staticmethod
+    def _normalize_thread_id(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        return normalized
+
+    @classmethod
+    def extract_thread_id(cls, msg: Any) -> str | None:
+        if msg is None:
+            return None
+        if hasattr(msg, "forum_topic_id"):
+            normalized = cls._normalize_thread_id(getattr(msg, "forum_topic_id", None))
+            if normalized is not None:
+                return normalized
+
+        reply_to = getattr(msg, "reply_to", None)
+        if reply_to is None:
+            return None
+
+        for field_name in (
+            "reply_to_top_id",
+            "top_msg_id",
+            "reply_to_top_msg_id",
+            "forum_topic_id",
+        ):
+            normalized = cls._normalize_thread_id(getattr(reply_to, field_name, None))
+            if normalized is not None:
+                return normalized
+        if bool(getattr(reply_to, "forum_topic", False)):
+            normalized = cls._normalize_thread_id(getattr(reply_to, "reply_to_msg_id", None))
+            if normalized is not None:
+                return normalized
+        return None
+
+    @classmethod
+    def _is_topic_root_reply(cls, msg: Any, thread_id: str | None) -> bool:
+        if thread_id is None:
+            return False
+        reply_to = getattr(msg, "reply_to", None)
+        reply_message_id = getattr(reply_to, "reply_to_msg_id", None)
+        return cls._normalize_thread_id(reply_message_id) == thread_id
+
+    @staticmethod
+    def is_topic_service_message(msg: Any) -> bool:
+        action = getattr(msg, "action", None)
+        if action is None:
+            return False
+        return type(action).__name__.startswith("MessageActionTopic")
 
     @staticmethod
     def strip_prefix_from_components(

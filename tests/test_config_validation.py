@@ -215,6 +215,22 @@ def _install_local_module_stubs() -> None:
         def __init__(self, adapter):
             self.adapter = adapter
 
+        @staticmethod
+        def extract_thread_id(message):
+            reply_to = getattr(message, "reply_to", None)
+            return str(getattr(reply_to, "reply_to_top_id", "")) or None
+
+        @staticmethod
+        def build_session_id(chat_id, thread_id, *, is_private):
+            if is_private or not thread_id:
+                return chat_id
+            return f"{chat_id}#{thread_id}"
+
+        @staticmethod
+        def is_topic_service_message(message):
+            action = getattr(message, "action", None)
+            return type(action).__name__.startswith("MessageActionTopic") if action is not None else False
+
     telethon_event_module.TelethonEvent = type("TelethonEvent", (), {})
     message_converter_module.TelethonMessageConverter = TelethonMessageConverter
 
@@ -223,6 +239,9 @@ def _install_local_module_stubs() -> None:
 
 
 def _load_adapter_module():
+    for module_name in list(sys.modules):
+        if module_name == "telethon_adapter" or module_name.startswith("telethon_adapter."):
+            sys.modules.pop(module_name, None)
     _install_astrbot_stubs()
     _install_pydantic_stubs()
     _install_telethon_stubs()
@@ -242,6 +261,9 @@ def _load_adapter_module():
 
 
 def _load_message_converter_module():
+    for module_name in list(sys.modules):
+        if module_name == "telethon_adapter" or module_name.startswith("telethon_adapter."):
+            sys.modules.pop(module_name, None)
     _install_astrbot_stubs()
     _install_pydantic_stubs()
     _install_telethon_stubs()
@@ -564,6 +586,134 @@ class AdapterBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(committed), 1)
         self.assertEqual(committed[0].message_str, "caption")
         self.assertEqual(committed[0].message, ["head", "part-10"])
+
+    async def test_on_new_message_ignores_topic_service_message(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+            },
+            {},
+            asyncio.Queue(),
+        )
+        adapter._running = True
+        converted = []
+        committed = []
+
+        async def fake_convert_message(event, include_reply=True):
+            converted.append((event.message.id, include_reply))
+            return types.SimpleNamespace(session_id=str(event.chat_id), message_str="", message=[], sender=None)
+
+        adapter._convert_message = fake_convert_message
+        adapter._commit_abm = committed.append
+
+        class _Event:
+            def __init__(self):
+                self.chat_id = "100"
+                self.sender_id = "777"
+                self.is_private = False
+                self.message = types.SimpleNamespace(
+                    id=15,
+                    raw_text="",
+                    grouped_id=None,
+                    out=False,
+                    action=type("MessageActionTopicCreate", (), {})(),
+                )
+
+            async def get_sender(self):
+                return types.SimpleNamespace(id=777, bot=True)
+
+        await adapter._on_new_message(_Event())
+
+        self.assertEqual(converted, [])
+        self.assertEqual(committed, [])
+
+    async def test_grouped_message_session_id_includes_topic_thread(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        event = types.SimpleNamespace(
+            chat_id="-100123",
+            is_private=False,
+            message=types.SimpleNamespace(
+                peer_id=type("PeerChannel", (), {})(),
+                reply_to=types.SimpleNamespace(reply_to_top_id=456),
+            ),
+        )
+
+        session_id = adapter._grouped_message_session_id(event)
+
+        self.assertEqual(session_id, "-100123#456")
+
+    async def test_process_grouped_message_keeps_topic_cache_separate(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+                "trigger_prefix": "",
+            },
+            {},
+            asyncio.Queue(),
+        )
+        committed = []
+
+        async def fake_convert_message(event, include_reply=True):
+            return types.SimpleNamespace(
+                message_id=str(event.message.id),
+                message_str=f"text-{event.message.id}",
+                message=[f"part-{event.message.id}"],
+                sender=types.SimpleNamespace(user_id="42", nickname="alice"),
+                session_id=f"{event.chat_id}#{event.message.reply_to.reply_to_top_id}",
+            )
+
+        adapter._convert_message = fake_convert_message
+        adapter._commit_abm = committed.append
+
+        event_topic_1 = types.SimpleNamespace(
+            chat_id="-100500",
+            sender_id="42",
+            message=types.SimpleNamespace(
+                id=21,
+                raw_text="",
+                reply_to=types.SimpleNamespace(reply_to_top_id=301),
+            ),
+        )
+        event_topic_2 = types.SimpleNamespace(
+            chat_id="-100500",
+            sender_id="42",
+            message=types.SimpleNamespace(
+                id=22,
+                raw_text="",
+                reply_to=types.SimpleNamespace(reply_to_top_id=302),
+            ),
+        )
+        adapter._media_group_cache[("-100500#301", 999)] = {
+            "created_at": 0.0,
+            "items": [event_topic_1],
+            "task": None,
+        }
+        adapter._media_group_cache[("-100500#302", 999)] = {
+            "created_at": 0.0,
+            "items": [event_topic_2],
+            "task": None,
+        }
+
+        await adapter._process_grouped_message(("-100500#301", 999), delay=0)
+        await adapter._process_grouped_message(("-100500#302", 999), delay=0)
+
+        self.assertEqual([item.session_id for item in committed], ["-100500#301", "-100500#302"])
 
     async def test_message_converter_peer_user_fallback_sets_friend_message_type(self):
         module = _load_message_converter_module()

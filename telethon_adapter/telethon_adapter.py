@@ -281,6 +281,14 @@ class TelethonPlatformAdapter(Platform):
         if not getattr(event, "message", None):
             self._log_unprocessed("[Telethon] Ignoring message: empty event.message")
             return
+        if self._message_converter.is_topic_service_message(event.message):
+            self._log_unprocessed(
+                "[Telethon] Ignoring topic service message: chat_id=%s msg_id=%s action=%s",
+                getattr(event, "chat_id", None),
+                getattr(event.message, "id", None),
+                type(getattr(event.message, "action", None)).__name__,
+            )
+            return
 
         event_key = (
             str(getattr(event, "chat_id", "")),
@@ -325,7 +333,7 @@ class TelethonPlatformAdapter(Platform):
         if grouped_id:
             await self._handle_grouped_message(
                 event,
-                str(event.chat_id),
+                self._grouped_message_session_id(event),
                 int(grouped_id),
             )
             return
@@ -415,10 +423,10 @@ class TelethonPlatformAdapter(Platform):
     async def _handle_grouped_message(
         self,
         event: events.NewMessage.Event,
-        chat_id: str,
+        session_id: str,
         grouped_id: int,
     ) -> None:
-        cache_key = (chat_id, grouped_id)
+        cache_key = (session_id, grouped_id)
         loop = asyncio.get_running_loop()
         now = loop.time()
         entry = self._media_group_cache.get(cache_key)
@@ -459,7 +467,7 @@ class TelethonPlatformAdapter(Platform):
         events_list = entry.get("items", [])
         if not events_list:
             return
-        grouped_id = cache_key[1]
+        session_id, grouped_id = cache_key
         events_list = sorted(events_list, key=lambda e: int(getattr(e.message, "id", 0)))
 
         trigger_event = None
@@ -471,8 +479,9 @@ class TelethonPlatformAdapter(Platform):
                     break
             if trigger_event is None:
                 self._log_unprocessed(
-                    "[Telethon] Ignoring media group: missing trigger_prefix %r grouped_id=%s",
+                    "[Telethon] Ignoring media group: missing trigger_prefix %r session_id=%s grouped_id=%s",
                     self.trigger_prefix,
+                    session_id,
                     grouped_id,
                 )
                 return
@@ -483,7 +492,8 @@ class TelethonPlatformAdapter(Platform):
             merged = await self._convert_message(trigger_event, include_reply=True)
         except Exception:
             logger.exception(
-                "[Telethon] Failed to convert media group primary message: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                "[Telethon] Failed to convert media group primary message: session_id=%s chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                session_id,
                 getattr(trigger_event, "chat_id", None),
                 grouped_id,
                 getattr(trigger_event.message, "id", None),
@@ -503,7 +513,8 @@ class TelethonPlatformAdapter(Platform):
                 extra = await self._convert_message(extra_event, include_reply=False)
             except Exception:
                 logger.exception(
-                    "[Telethon] Failed to convert media group child message: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                    "[Telethon] Failed to convert media group child message: session_id=%s chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                    session_id,
                     getattr(extra_event, "chat_id", None),
                     grouped_id,
                     getattr(extra_event.message, "id", None),
@@ -523,6 +534,20 @@ class TelethonPlatformAdapter(Platform):
         if not merged.message_str:
             merged.message_str = "[媒体组]"
         self._commit_abm(merged)
+
+    def _grouped_message_session_id(self, event: events.NewMessage.Event) -> str:
+        message = getattr(event, "message", None)
+        peer = getattr(message, "peer_id", None)
+        is_private = bool(getattr(event, "is_private", False))
+        if not is_private and type(peer).__name__ == "PeerUser":
+            is_private = True
+        chat_id = str(getattr(event, "chat_id", ""))
+        thread_id = None if is_private else self._message_converter.extract_thread_id(message)
+        return self._message_converter.build_session_id(
+            chat_id,
+            thread_id,
+            is_private=is_private,
+        )
 
     def _get_media_temp_dir(self) -> str:
         os.makedirs(self._media_temp_dir, exist_ok=True)

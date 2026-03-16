@@ -6,6 +6,11 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REAL_TELETHON_SITE_PACKAGES = (
+    PROJECT_ROOT / ".venv" / "lib" / "python3.13" / "site-packages"
+)
+
 
 def _install_astrbot_stubs() -> None:
     astrbot_module = types.ModuleType("astrbot")
@@ -158,6 +163,36 @@ def _load_message_converter_module():
     return sys.modules["telethon_adapter.message_converter"]
 
 
+def _load_message_converter_module_with_real_telethon():
+    _install_astrbot_stubs()
+    _install_pydantic_stubs()
+
+    for module_name in list(sys.modules):
+        if module_name == "telethon" or module_name.startswith("telethon."):
+            sys.modules.pop(module_name, None)
+
+    site_packages = str(REAL_TELETHON_SITE_PACKAGES)
+    if site_packages not in sys.path:
+        sys.path.insert(0, site_packages)
+
+    package_name = "telethon_adapter"
+    package_path = PROJECT_ROOT / package_name
+    package_module = types.ModuleType(package_name)
+    package_module.__path__ = [str(package_path)]
+    sys.modules[package_name] = package_module
+
+    for module_name in ["lazy_media", "message_converter"]:
+        full_name = f"{package_name}.{module_name}"
+        module_path = package_path / f"{module_name}.py"
+        spec = importlib.util.spec_from_file_location(full_name, module_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        sys.modules[full_name] = module
+        spec.loader.exec_module(module)
+
+    return sys.modules["telethon_adapter.message_converter"]
+
+
 class _FakeAdapter:
     def __init__(self, temp_dir: str, download_incoming_media: bool = True) -> None:
         self.self_id = "999"
@@ -204,6 +239,7 @@ class _FakeMessage:
         photo=None,
         document=None,
         reply_message=None,
+        forum_topic_id=None,
     ) -> None:
         self.id = message_id
         self.raw_text = raw_text
@@ -213,6 +249,7 @@ class _FakeMessage:
         self.document = document
         self.reply_to = None
         self._reply_message = reply_message
+        self.forum_topic_id = forum_topic_id
 
     async def get_reply_message(self):
         if isinstance(self._reply_message, Exception):
@@ -579,6 +616,129 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.message[1].qq, "astrbot")
         self.assertEqual(type(result.message[2]).__name__, "Plain")
         self.assertEqual(result.message[2].text, "ack")
+
+    async def test_convert_group_topic_message_uses_thread_scoped_session(self):
+        module = _load_message_converter_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+            message = _FakeMessage(
+                5,
+                raw_text="-astr hello topic",
+            )
+            message.reply_to = types.SimpleNamespace(
+                reply_to_msg_id=456,
+                reply_to_top_id=456,
+            )
+            event = _FakeEvent(
+                message,
+                _FakeSender(123, username="alice"),
+                chat_id="-100123456",
+            )
+
+            result = await converter.convert_message(event)
+
+        self.assertEqual(result.type, "group")
+        self.assertEqual(result.group_id, "-100123456#456")
+        self.assertEqual(result.session_id, "-100123456#456")
+        self.assertEqual(type(result.message[0]).__name__, "At")
+        self.assertEqual(type(result.message[1]).__name__, "Plain")
+        self.assertEqual(result.message[1].text, "hello topic")
+
+    async def test_convert_topic_root_reply_does_not_emit_reply_component(self):
+        module = _load_message_converter_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+            message = _FakeMessage(
+                6,
+                raw_text="-astr in topic",
+            )
+            message.reply_to = types.SimpleNamespace(
+                reply_to_msg_id=777,
+                top_msg_id=777,
+            )
+            event = _FakeEvent(
+                message,
+                _FakeSender(123, username="alice"),
+                chat_id="-100222",
+            )
+
+            result = await converter.convert_message(event)
+
+        self.assertEqual(result.group_id, "-100222#777")
+        self.assertFalse(any(type(component).__name__ == "Reply" for component in result.message))
+
+    async def test_convert_forum_topic_reply_header_uses_reply_to_msg_id_as_thread(self):
+        module = _load_message_converter_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            converter = module.TelethonMessageConverter(_FakeAdapter(temp_dir))
+            message = _FakeMessage(
+                7,
+                raw_text="-astr hi",
+            )
+            message.reply_to = types.SimpleNamespace(
+                forum_topic=True,
+                reply_to_msg_id=888,
+            )
+            event = _FakeEvent(
+                message,
+                _FakeSender(123, username="alice"),
+                chat_id="-100333",
+            )
+
+            result = await converter.convert_message(event)
+
+        self.assertEqual(result.group_id, "-100333#888")
+        self.assertEqual(result.session_id, "-100333#888")
+        self.assertFalse(any(type(component).__name__ == "Reply" for component in result.message))
+
+
+@unittest.skipUnless(
+    REAL_TELETHON_SITE_PACKAGES.exists(),
+    "real Telethon test requires project .venv",
+)
+class MessageConverterRealTelethonTests(unittest.TestCase):
+    def test_extract_thread_id_prefers_real_reply_to_top_id(self):
+        module = _load_message_converter_module_with_real_telethon()
+        from telethon.tl.types import MessageReplyHeader
+
+        message = types.SimpleNamespace(
+            reply_to=MessageReplyHeader(
+                forum_topic=True,
+                reply_to_msg_id=900,
+                reply_to_top_id=777,
+            )
+        )
+
+        self.assertEqual(module.TelethonMessageConverter.extract_thread_id(message), "777")
+
+    def test_extract_thread_id_uses_real_top_msg_id_fallback(self):
+        module = _load_message_converter_module_with_real_telethon()
+        from telethon.tl.types import InputReplyToMessage
+
+        message = types.SimpleNamespace(
+            reply_to=InputReplyToMessage(
+                reply_to_msg_id=900,
+                top_msg_id=666,
+            )
+        )
+
+        self.assertEqual(module.TelethonMessageConverter.extract_thread_id(message), "666")
+
+    def test_extract_thread_id_uses_real_forum_topic_reply_to_msg_id_fallback(self):
+        module = _load_message_converter_module_with_real_telethon()
+        from telethon.tl.types import MessageReplyHeader
+
+        message = types.SimpleNamespace(
+            reply_to=MessageReplyHeader(
+                forum_topic=True,
+                reply_to_msg_id=555,
+            )
+        )
+
+        self.assertEqual(module.TelethonMessageConverter.extract_thread_id(message), "555")
 
 
 if __name__ == "__main__":

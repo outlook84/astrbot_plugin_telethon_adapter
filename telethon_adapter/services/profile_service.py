@@ -288,7 +288,9 @@ class TelethonProfileService:
         session_id = getattr(event, "session_id", "")
         if session_id:
             try:
-                return await client.get_entity(int(session_id)), "当前会话"
+                peer_id = self._session_peer_id(session_id)
+                if peer_id is not None:
+                    return await client.get_entity(peer_id), "当前会话"
             except Exception:
                 logger.debug(
                     "[Telethon] Failed to resolve profile target via session_id: session_id=%s",
@@ -297,6 +299,19 @@ class TelethonProfileService:
                 )
 
         raise ValueError(t(event, "profile.resolve_failed"))
+
+    @staticmethod
+    def _session_peer_id(session_id: Any) -> int | None:
+        normalized = str(session_id or "").strip()
+        if not normalized:
+            return None
+        peer_part = normalized.split("#", 1)[0].strip()
+        if not peer_part:
+            return None
+        try:
+            return int(peer_part)
+        except (TypeError, ValueError):
+            return None
 
     async def _resolve_reply_entity(self, raw_message: Any) -> Any | None:
         get_reply_message = getattr(raw_message, "get_reply_message", None)

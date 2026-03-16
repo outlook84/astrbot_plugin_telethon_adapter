@@ -4,6 +4,11 @@ import types
 import unittest
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REAL_TELETHON_SITE_PACKAGES = (
+    PROJECT_ROOT / ".venv" / "lib" / "python3.13" / "site-packages"
+)
+
 
 def _install_astrbot_stubs() -> None:
     astrbot_module = types.ModuleType("astrbot")
@@ -96,19 +101,54 @@ def _install_telethon_stubs() -> None:
     types_module = types.ModuleType("telethon.types")
 
     class SetTypingRequest:
-        def __init__(self, peer, action):
+        def __init__(self, peer, action, top_msg_id=None):
             self.peer = peer
             self.action = action
+            self.top_msg_id = top_msg_id
+
+    class SendMessageRequest:
+        def __init__(self, peer, message, entities=None, no_webpage=True, reply_to=None, **kwargs):
+            self.peer = peer
+            self.message = message
+            self.entities = entities
+            self.no_webpage = no_webpage
+            self.reply_to = reply_to
+            self.kwargs = kwargs
+
+    class SendMediaRequest:
+        def __init__(self, peer, media, reply_to=None, message="", entities=None, **kwargs):
+            self.peer = peer
+            self.media = media
+            self.reply_to = reply_to
+            self.message = message
+            self.entities = entities
+            self.kwargs = kwargs
 
     class SendMessageTypingAction:
         pass
+
+    class SendMessageUploadPhotoAction:
+        def __init__(self, progress=0):
+            self.progress = progress
+
+    class InputReplyToMessage:
+        def __init__(self, reply_to_msg_id, top_msg_id=None):
+            self.reply_to_msg_id = reply_to_msg_id
+            self.top_msg_id = top_msg_id
 
     class TypeSendMessageAction:
         pass
 
     messages_module.SetTypingRequest = SetTypingRequest
+    messages_module.SendMessageRequest = SendMessageRequest
+    messages_module.SendMediaRequest = SendMediaRequest
     functions_module.messages = messages_module
+    types_module.InputReplyToMessage = InputReplyToMessage
     types_module.SendMessageTypingAction = SendMessageTypingAction
+    types_module.SendMessageUploadPhotoAction = SendMessageUploadPhotoAction
+    types_module.SendMessageUploadVideoAction = SendMessageUploadPhotoAction
+    types_module.SendMessageUploadAudioAction = SendMessageUploadPhotoAction
+    types_module.SendMessageUploadDocumentAction = SendMessageUploadPhotoAction
     types_module.TypeSendMessageAction = TypeSendMessageAction
     telethon_module.functions = functions_module
     telethon_module.types = types_module
@@ -297,8 +337,31 @@ def _load_telethon_event_module():
     _install_astrbot_stubs()
     _install_telethon_stubs()
     _install_markdown_stubs()
-    module_path = Path(__file__).resolve().parents[1] / "telethon_adapter" / "telethon_event.py"
+    module_path = PROJECT_ROOT / "telethon_adapter" / "telethon_event.py"
     spec = importlib.util.spec_from_file_location("test_telethon_event_module", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_telethon_event_module_with_real_telethon():
+    _install_astrbot_stubs()
+    _install_markdown_stubs()
+
+    for module_name in list(sys.modules):
+        if module_name == "telethon" or module_name.startswith("telethon."):
+            sys.modules.pop(module_name, None)
+
+    site_packages = str(REAL_TELETHON_SITE_PACKAGES)
+    if site_packages not in sys.path:
+        sys.path.insert(0, site_packages)
+
+    module_path = PROJECT_ROOT / "telethon_adapter" / "telethon_event.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_telethon_event_real_module",
+        module_path,
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -311,9 +374,13 @@ class _FakeClient:
         self.sent_messages = []
         self.typing_actions = []
         self.sent_files = []
+        self.requests = []
 
     async def __call__(self, request):
-        self.typing_actions.append(request)
+        self.requests.append(request)
+        if type(request).__name__ == "SetTypingRequest":
+            self.typing_actions.append(request)
+        return {"request": request}
 
     async def send_message(self, peer, text, **kwargs):
         if kwargs.get("parse_mode") == "html" and self.fail_html:
@@ -325,8 +392,49 @@ class _FakeClient:
         self.sent_files.append((peer, file, caption, reply_to))
         return {"peer": peer, "file": file, "caption": caption, "reply_to": reply_to}
 
+    async def get_input_entity(self, peer):
+        return f"input:{peer}"
+
+    async def _parse_message_text(self, text, parse_mode):
+        return text, [types.SimpleNamespace(parse_mode=parse_mode)]
+
+    async def _file_to_media(self, file, **kwargs):
+        return None, f"media:{file}", file.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
+
+    def _get_response_message(self, request, result, entity):
+        return {"request": request, "result": result, "entity": entity}
+
+
+class _FakeImage:
+    type = "Image"
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+
+    async def convert_to_file_path(self):
+        return self._path
+
+
+def _make_image_component(path: str):
+    image_type = sys.modules["astrbot.api.message_components"].Image
+    image = image_type()
+
+    async def _convert_to_file_path():
+        return path
+
+    image.convert_to_file_path = _convert_to_file_path
+    return image
+
 
 class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
+    def test_parse_session_target_supports_topic_session_id(self):
+        module = _load_telethon_event_module()
+
+        peer, thread_id = module.TelethonEvent._parse_session_target("123456#789")
+
+        self.assertEqual(peer, 123456)
+        self.assertEqual(thread_id, 789)
+
     def test_split_message_prefers_newline_boundaries(self):
         module = _load_telethon_event_module()
         chunk = "a" * 4094 + "\nrest"
@@ -467,6 +575,181 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
             '<a href="tg://user?id=123456">@Alice</a>  hello &lt;world&gt;',
         )
         self.assertEqual(kwargs["parse_mode"], "html")
+
+    async def test_send_topic_session_defaults_reply_to_thread_root(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(chain_type([plain_type(text="hello topic")]))
+
+        self.assertEqual(len(client.sent_messages), 0)
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMessageRequest"
+        )
+        self.assertEqual(request.peer, "input:123")
+        self.assertEqual(request.message, "hello topic")
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 456)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+        self.assertEqual(client.typing_actions[0].top_msg_id, 456)
+
+    async def test_explicit_reply_overrides_topic_thread_root(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        reply_type = sys.modules["astrbot.api.message_components"].Reply
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(chain_type([reply_type(id="999"), plain_type(text="hello")]))
+
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMessageRequest"
+        )
+        self.assertEqual(request.peer, "input:123")
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 999)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+
+    async def test_send_topic_image_defaults_reply_to_thread_root(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(chain_type([_make_image_component("/tmp/topic-image.png")]))
+
+        self.assertEqual(len(client.sent_files), 0)
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(request.peer, "input:123")
+        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.message, "")
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 456)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+
+    async def test_send_topic_image_preserves_explicit_reply_and_thread(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        reply_type = sys.modules["astrbot.api.message_components"].Reply
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(
+            chain_type(
+                [
+                    reply_type(id="999"),
+                    _make_image_component("/tmp/topic-image.png"),
+                ]
+            )
+        )
+
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(request.peer, "input:123")
+        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.message, "")
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 999)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+
+
+@unittest.skipUnless(
+    REAL_TELETHON_SITE_PACKAGES.exists(),
+    "real Telethon test requires project .venv",
+)
+class TelethonEventRealTelethonTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_topic_session_uses_real_input_reply_to_message(self):
+        module = _load_telethon_event_module_with_real_telethon()
+        from telethon.tl.types import InputReplyToMessage
+
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(chain_type([plain_type(text="hello topic")]))
+
+        from telethon.tl.functions.messages import SendMessageRequest
+
+        request = next(
+            request for request in client.requests if isinstance(request, SendMessageRequest)
+        )
+        self.assertEqual(request.message, "hello topic")
+        self.assertIsInstance(request.reply_to, InputReplyToMessage)
+        self.assertEqual(request.reply_to.reply_to_msg_id, 456)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+
+    async def test_send_typing_uses_real_set_typing_request_with_thread(self):
+        module = _load_telethon_event_module_with_real_telethon()
+        from telethon.tl.functions.messages import SetTypingRequest
+
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+
+        await event.send_typing()
+
+        self.assertEqual(len(client.typing_actions), 1)
+        request = client.typing_actions[0]
+        self.assertIsInstance(request, SetTypingRequest)
+        self.assertEqual(request.peer, 123)
+        self.assertEqual(request.top_msg_id, 456)
+
+    async def test_send_topic_image_uses_real_input_reply_to_message(self):
+        module = _load_telethon_event_module_with_real_telethon()
+        from telethon.tl.types import InputReplyToMessage
+
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(chain_type([_make_image_component("/tmp/topic-image.png")]))
+
+        from telethon.tl.functions.messages import SendMediaRequest
+
+        request = next(
+            request for request in client.requests if isinstance(request, SendMediaRequest)
+        )
+        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.message, "")
+        self.assertIsInstance(request.reply_to, InputReplyToMessage)
+        self.assertEqual(request.reply_to.reply_to_msg_id, 456)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
+
+    async def test_send_topic_image_with_explicit_reply_uses_real_input_reply_to_message(self):
+        module = _load_telethon_event_module_with_real_telethon()
+        from telethon.tl.types import InputReplyToMessage
+
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        reply_type = sys.modules["astrbot.api.message_components"].Reply
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(
+            chain_type(
+                [
+                    reply_type(id="999"),
+                    _make_image_component("/tmp/topic-image.png"),
+                ]
+            )
+        )
+
+        from telethon.tl.functions.messages import SendMediaRequest
+
+        request = next(
+            request for request in client.requests if isinstance(request, SendMediaRequest)
+        )
+        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.message, "")
+        self.assertIsInstance(request.reply_to, InputReplyToMessage)
+        self.assertEqual(request.reply_to.reply_to_msg_id, 999)
+        self.assertEqual(request.reply_to.top_msg_id, 456)
 
 
 if __name__ == "__main__":

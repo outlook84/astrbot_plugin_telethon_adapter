@@ -153,12 +153,13 @@ class _FakeMessageObj:
 
 
 class _FakeEvent:
-    def __init__(self, client, message_obj, raw_message=None, is_private=False, sender_id=""):
+    def __init__(self, client, message_obj, raw_message=None, is_private=False, sender_id="", session_id=""):
         self.client = client
         self.message_obj = message_obj
         self.message_obj.raw_message = raw_message
         self._is_private = is_private
         self._sender_id = sender_id
+        self.session_id = session_id
 
     def is_private_chat(self):
         return self._is_private
@@ -235,6 +236,24 @@ class TelethonProfileServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(entity, "entity:12345")
         self.assertEqual(source, "当前消息中的 @ 提及")
+
+    async def test_resolve_entity_uses_topic_session_id_fallback(self):
+        service = TelethonProfileService()
+        client = _FakeClient()
+
+        entity, source = await service._resolve_entity(
+            _FakeEvent(
+                client,
+                _FakeMessageObj([]),
+                raw_message=None,
+                session_id="-100123456#789",
+            ),
+            "",
+        )
+
+        self.assertEqual(entity, "entity:-100123456")
+        self.assertEqual(source, "当前会话")
+        self.assertEqual(client.lookups, [-100123456])
 
     async def test_resolve_entity_prefers_private_chat_peer_over_sender(self):
         service = TelethonProfileService()
