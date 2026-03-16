@@ -9,7 +9,7 @@ A Telegram Userbot adapter for AstrBot built on top of Telethon.
 ## Features
 
 - Receive Telegram messages with a user account and send text or image messages back
-- Connect through a real Telegram user account, so uploads are not limited by the Bot API 50 MB upload cap
+- Connect through a real Telegram user account, so uploads are not limited by the Bot API (non-self-hosted) 50 MB upload cap
 - Automatically split long messages to fit Telegram limits
 - Support quoted replies via the `Reply` segment
 - Provide `tg profile` to inspect user/group/channel profiles
@@ -23,7 +23,7 @@ A Telegram Userbot adapter for AstrBot built on top of Telethon.
 - This is a Userbot solution. Account restrictions or bans are governed by Telegram policy and are your own responsibility.
 - `session_string` grants full access to the Telegram account. Store it carefully.
 - If `session_string` expires, generate a new one and update the configuration.
-- `telethon_userbot` does not support platform-level streaming display. If AstrBot enables `provider_settings.streaming_response`, set unsupported platforms to "disable streaming response" instead of "real-time segmented reply".
+- `telethon_userbot` does not support platform-level streaming display. If AstrBot enables `provider_settings.streaming_response`, set unsupported platforms to "disable streaming response".
 - The runtime platform type and plugin metadata in this repository are unified as `telethon_userbot`. Until AstrBot upstream merges the corresponding platform type, existing Telegram-specific hooks such as `@platform_adapter_type("telegram")`, `platform_specific.telegram.*`, and semantics based on `support_platforms` will not automatically target this adapter.
 - Batch deletion is a high-risk operation. The current implementation keeps conservative limits enabled by default: each `prune` command deletes at most `200` messages at a time; `selfprune` / `youprune` scan at most `1000` recent messages; throttling is applied between each batch of `100` deletions.
 - Delete permissions, service message constraints, and `FloodWait` behavior are determined by Telegram and Telethon. Even with correct parameters, deletion may partially succeed or fail because of permissions or rate limits.

@@ -9,7 +9,7 @@ English README: [README_EN.md](README_EN.md)
 ## 功能
 
 - 使用用户账户接收 Telegram 消息并回发文本与图片消息
-- 基于用户账号直连 Telegram，不受 Bot API 50MB 上传限制约束
+- 基于用户账号连接 Telegram，不受非自部署 Bot API 50MB 上传限制约束
 - 长文本自动按 Telegram 上限分片发送
 - 支持引用回复（`Reply` 消息段）
 - 提供 `tg profile` 命令，用于获取用户/群组/频道资料
@@ -23,7 +23,7 @@ English README: [README_EN.md](README_EN.md)
 - 这是 Userbot 方案，账号风控由 Telegram 官方策略决定，账户被限制/封禁风险自负。
 - `session_string` 具备 Telegram 账号完全权限，请妥善保管。
 - 如果 `session_string` 失效，需要重新生成并更新配置。
-- `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”，不要使用“实时分段回复”。
+- `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”。
 - 当前仓库已将运行时平台类型和插件元数据统一为 `telethon_userbot`。在 AstrBot 上游尚未合并对应平台类型前，`@platform_adapter_type("telegram")`、`platform_specific.telegram.*` 和基于 `support_platforms` 的既有 Telegram 语义不会自动命中该适配器。
 - 批量删消息属于高风险操作。当前实现默认启用保守限制：所有 `prune` 命令单次最多删除 `200` 条；`selfprune` / `youprune` 最多向前扫描 `1000` 条历史；每 `100` 条删除批次之间增加节流。
 - 删除权限、服务消息限制与 `FloodWait` 由 Telegram/Telethon 决定；即使命令参数正确，也可能因为会话权限或风控而部分成功或失败。
@@ -43,7 +43,7 @@ data/plugins/astrbot_plugin_telethon_adapter/
 
 ## 生成 `session_string`
 
-先在 [my.telegram.org](https://my.telegram.org) 申请 `api_id` 和 `api_hash`。如果无法申请到，换落地 IP 地址。
+先在 [my.telegram.org](https://my.telegram.org) 申请 `api_id` 和 `api_hash`。如果无法申请到，更换代理出口 IP 地址。
 
 `session_string` 需要通过交互授权生成。在`AstrBot` 的 `data/plugins/` 目录下运行：
 
