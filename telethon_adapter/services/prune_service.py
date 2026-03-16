@@ -117,6 +117,8 @@ class TelethonPruneService:
             self_id=await self._resolve_self_id(client, raw_message) if only_self else None,
             target_user_id=self._coerce_message_id(getattr(target_user, "id", None)),
             scan_limit=PRUNE_FILTERED_SCAN_LIMIT if (only_self or target_user is not None) else None,
+            thread_id=self._resolve_thread_id(event, raw_message),
+            from_user="me" if only_self else target_user,
         )
         all_candidate_ids = (
             [command_message_id, *candidate_ids]
@@ -278,12 +280,20 @@ class TelethonPruneService:
         self_id: int | None,
         target_user_id: int | None,
         scan_limit: int | None,
+        thread_id: int | None,
+        from_user: Any | None,
     ) -> tuple[list[int], int, int]:
         candidate_ids: list[int] = []
         scanned_count = 0
         filtered_out_count = 0
 
-        async for message in client.iter_messages(peer, offset_id=current_message_id):
+        iter_kwargs = {"offset_id": current_message_id}
+        if thread_id is not None:
+            iter_kwargs["reply_to"] = thread_id
+        if from_user is not None:
+            iter_kwargs["from_user"] = from_user
+
+        async for message in client.iter_messages(peer, **iter_kwargs):
             if scan_limit is not None and scanned_count >= scan_limit:
                 break
 
@@ -301,6 +311,26 @@ class TelethonPruneService:
                 break
 
         return candidate_ids, scanned_count, filtered_out_count
+
+    @classmethod
+    def _resolve_thread_id(cls, event: Any, raw_message: Any) -> int | None:
+        thread_id = cls._coerce_message_id(getattr(event, "thread_id", None))
+        if thread_id is not None:
+            return thread_id
+
+        reply_to = getattr(raw_message, "reply_to", None)
+        for field_name in (
+            "reply_to_top_id",
+            "top_msg_id",
+            "reply_to_top_msg_id",
+            "forum_topic_id",
+        ):
+            thread_id = cls._coerce_message_id(getattr(reply_to, field_name, None))
+            if thread_id is not None:
+                return thread_id
+        if bool(getattr(reply_to, "forum_topic", False)):
+            return cls._coerce_message_id(getattr(reply_to, "reply_to_msg_id", None))
+        return None
 
     def _collect_current_command_message(
         self,
@@ -546,18 +576,18 @@ class TelethonPruneService:
                 raise ValueError(t(event, "prune.target_user_only"))
             return entity
 
+        reply_entity = await self._resolve_reply_entity(raw_message, client)
+        if reply_entity is not None:
+            if not _has_user_identity(reply_entity):
+                raise ValueError(t(event, "prune.reply_target_not_user"))
+            return reply_entity
+
         mention_entity = await self._resolve_mention_entity(
             client,
             getattr(event, "message_obj", None),
         )
         if mention_entity is not None:
             return mention_entity
-
-        reply_entity = await self._resolve_reply_entity(raw_message)
-        if reply_entity is not None:
-            if not _has_user_identity(reply_entity):
-                raise ValueError(t(event, "prune.reply_target_not_user"))
-            return reply_entity
 
         raise ValueError(t(event, "prune.target_not_found"))
 
@@ -595,7 +625,7 @@ class TelethonPruneService:
                 return entity
         return None
 
-    async def _resolve_reply_entity(self, raw_message: Any) -> Any | None:
+    async def _resolve_reply_entity(self, raw_message: Any, client: Any | None = None) -> Any | None:
         get_reply_message = getattr(raw_message, "get_reply_message", None)
         if not callable(get_reply_message):
             return None
@@ -609,11 +639,33 @@ class TelethonPruneService:
 
         get_sender = getattr(reply_message, "get_sender", None)
         if not callable(get_sender):
-            return None
+            sender = getattr(reply_message, "sender", None)
+            if sender is not None:
+                return sender
+            return await self._resolve_reply_sender_by_id(reply_message, client)
         try:
-            return await get_sender()
+            sender = await get_sender()
         except Exception:
             logger.debug("[Telethon] Failed to fetch prune reply sender", exc_info=True)
+            sender = getattr(reply_message, "sender", None)
+            if sender is not None:
+                return sender
+            return await self._resolve_reply_sender_by_id(reply_message, client)
+        if sender is not None:
+            return sender
+        return await self._resolve_reply_sender_by_id(reply_message, client)
+
+    async def _resolve_reply_sender_by_id(self, reply_message: Any, client: Any | None) -> Any | None:
+        sender_id = self._coerce_message_id(getattr(reply_message, "sender_id", None))
+        if sender_id is None:
+            from_id = getattr(reply_message, "from_id", None)
+            sender_id = self._coerce_message_id(getattr(from_id, "user_id", None))
+        if sender_id is None or client is None:
+            return None
+        try:
+            return await client.get_entity(sender_id)
+        except Exception:
+            logger.debug("[Telethon] Failed to resolve prune reply sender by sender_id=%s", sender_id, exc_info=True)
             return None
 
     @staticmethod

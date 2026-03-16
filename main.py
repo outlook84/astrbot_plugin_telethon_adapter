@@ -1,3 +1,5 @@
+import asyncio
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
@@ -29,6 +31,7 @@ class TelethonAdapterPlugin(Star):
         self.context = context
         self._profile_service = TelethonProfileService()
         self._prune_service = TelethonPruneService()
+        self._prune_lock = asyncio.Lock()
         self._sticker_service = TelethonStickerService(self)
         self._status_service = TelethonStatusService(context)
         self._sender = TelethonSender()
@@ -69,6 +72,20 @@ class TelethonAdapterPlugin(Star):
             return int(normalized_count)
         except ValueError as exc:
             raise ValueError(usage_message) from exc
+
+    @staticmethod
+    def _normalize_prune_args(log_name: str, target: str = "", count: str = "") -> tuple[str, str]:
+        normalized_target = str(target or "").strip()
+        normalized_count = str(count or "").strip()
+        if (
+            log_name == "tg_youprune"
+            and normalized_target
+            and not normalized_count
+            and normalized_target.lstrip("-").isdigit()
+        ):
+            normalized_count = normalized_target
+            normalized_target = ""
+        return normalized_target, normalized_count
 
     async def _send_text_result(
         self,
@@ -146,44 +163,56 @@ class TelethonAdapterPlugin(Star):
         only_self: bool = False,
         target: str = "",
     ) -> None:
-        self._log_command_debug(event, log_name, target=target, count=count)
         if not self._ensure_supported_event(event, t(event, "errors.unsupported_prune")):
             return
 
-        normalized_target = str(target or "").strip()
-        normalized_count = str(count or "").strip()
-        if (
-            log_name == "tg_youprune"
-            and normalized_target
-            and not normalized_count
-            and normalized_target.lstrip("-").isdigit()
-        ):
-            normalized_count = normalized_target
-            normalized_target = ""
+        normalized_target, normalized_count = self._normalize_prune_args(
+            log_name,
+            target,
+            count,
+        )
+        self._log_command_debug(
+            event,
+            log_name,
+            target=normalized_target,
+            count=normalized_count,
+        )
+        if self._prune_lock.locked():
+            event.set_result(t(event, "prune.busy"))
+            return
 
-        try:
-            prune_count = self._parse_optional_count(normalized_count, usage_message)
-            target_user = None
-            if log_name == "tg_youprune":
-                target_user = await self._prune_service.resolve_target_user(event, normalized_target)
-            result = await self._prune_service.prune_messages(
-                event,
-                prune_count,
-                only_self=only_self,
-                target_user=target_user,
-            )
-        except ValueError as exc:
-            event.set_result(str(exc))
-            return
-        except Exception as exc:
-            logger.exception(
-                "[Telethon] Command %s failed: target=%r count=%r",
-                log_name.removeprefix("tg_"),
-                target,
-                count,
-            )
-            event.set_result(t(event, "errors.prune_failed", error=exc))
-            return
+        async with self._prune_lock:
+            try:
+                prune_count = self._parse_optional_count(normalized_count, usage_message)
+                target_user = None
+                if log_name == "tg_youprune":
+                    target_user = await self._prune_service.resolve_target_user(event, normalized_target)
+                result = await self._prune_service.prune_messages(
+                    event,
+                    prune_count,
+                    only_self=only_self,
+                    target_user=target_user,
+                )
+            except ValueError as exc:
+                if bool(getattr(event, "telethon_debug_logging", False)):
+                    logger.info(
+                        "[Telethon][Debug] %s rejected: target=%r count=%r error=%s",
+                        log_name,
+                        normalized_target,
+                        normalized_count,
+                        exc,
+                    )
+                event.set_result(str(exc))
+                return
+            except Exception as exc:
+                logger.exception(
+                    "[Telethon] Command %s failed: target=%r count=%r",
+                    log_name.removeprefix("tg_"),
+                    target,
+                    count,
+                )
+                event.set_result(t(event, "errors.prune_failed", error=exc))
+                return
 
         await self._send_text_result(
             event,

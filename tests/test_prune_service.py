@@ -121,8 +121,17 @@ class _FakeClient:
         self.delete_side_effects = list(delete_side_effects or [])
         self.me_id = me_id
         self.entities = {}
+        self.iter_calls = []
 
-    def iter_messages(self, peer, offset_id=None):
+    def iter_messages(self, peer, offset_id=None, reply_to=None, from_user=None):
+        self.iter_calls.append(
+            {
+                "peer": peer,
+                "offset_id": offset_id,
+                "reply_to": reply_to,
+                "from_user": from_user,
+            }
+        )
         async def _iterator():
             for message in self._messages:
                 yield message
@@ -151,17 +160,22 @@ class _FakeEvent:
         self,
         client,
         reply_to_msg_id=None,
+        reply_to_top_id=None,
         chat=None,
         command_sender_id=900,
         command_out=False,
         message_chain=None,
         self_id="42",
         reply_sender=None,
+        thread_id=None,
     ):
         raw_message = types.SimpleNamespace(
             id=300,
             peer_id="peer:chat",
-            reply_to=types.SimpleNamespace(reply_to_msg_id=reply_to_msg_id),
+            reply_to=types.SimpleNamespace(
+                reply_to_msg_id=reply_to_msg_id,
+                reply_to_top_id=reply_to_top_id,
+            ),
             out=command_out,
             sender_id=command_sender_id,
         )
@@ -179,11 +193,19 @@ class _FakeEvent:
         raw_message.get_reply_message = _get_reply_message
         self.client = client
         self.peer = "peer:event"
+        self.thread_id = thread_id
         self.message_obj = types.SimpleNamespace(
             raw_message=raw_message,
             message=message_chain or [],
             self_id=self_id,
         )
+
+
+class _ReplyMessageWithoutGetSender:
+    def __init__(self, *, sender=None, sender_id=None, from_id=None):
+        self.sender = sender
+        self.sender_id = sender_id
+        self.from_id = from_id
 
 
 def _awaitable(value):
@@ -263,6 +285,27 @@ class TelethonPruneServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.deleted_count, 3)
         self.assertTrue(result.command_deleted)
         self.assertEqual(client.delete_calls, [("peer:event", [300, 299, 298, 297], True)])
+
+    async def test_prune_topic_session_scans_only_current_thread(self):
+        service = TelethonPruneService()
+        client = _FakeClient(
+            [
+                _FakeMessage(299),
+                _FakeMessage(298),
+                _FakeMessage(297),
+            ]
+        )
+
+        result = await service.prune_messages(
+            _FakeEvent(client, thread_id=456),
+            2,
+        )
+
+        self.assertEqual(client.iter_calls[0]["reply_to"], 456)
+        self.assertEqual(result.deleted_count, 2)
+        self.assertEqual(result.scanned_count, 2)
+        self.assertEqual(client.delete_calls, [("peer:event", [300, 299, 298], True)])
+        self.assertIsNone(client.iter_calls[0]["from_user"])
 
     async def test_prune_without_count_requires_reply_anchor(self):
         service = TelethonPruneService()
@@ -418,6 +461,29 @@ class TelethonPruneServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.skipped_count, 0)
         self.assertEqual(client.delete_calls, [("peer:event", [300, 298], True)])
 
+    async def test_selfprune_topic_session_scans_only_current_thread(self):
+        service = TelethonPruneService()
+        client = _FakeClient(
+            [
+                _FakeMessage(299, sender_id=42),
+                _FakeMessage(298, sender_id=42),
+                _FakeMessage(297, sender_id=7),
+            ]
+        )
+
+        result = await service.prune_messages(
+            _FakeEvent(client, thread_id=456),
+            2,
+            only_self=True,
+        )
+
+        self.assertEqual(client.iter_calls[0]["reply_to"], 456)
+        self.assertEqual(client.iter_calls[0]["from_user"], "me")
+        self.assertEqual(result.deleted_count, 2)
+        self.assertEqual(result.scanned_count, 2)
+        self.assertEqual(result.filtered_out_count, 0)
+        self.assertEqual(client.delete_calls, [("peer:event", [300, 299, 298], True)])
+
     async def test_youprune_resolves_target_from_mention(self):
         service = TelethonPruneService()
         client = _FakeClient(
@@ -454,6 +520,40 @@ class TelethonPruneServiceTest(unittest.IsolatedAsyncioTestCase):
         resolved = await service.resolve_target_user(
             _FakeEvent(client, reply_to_msg_id=250, reply_sender=target_user),
         )
+
+        self.assertEqual(getattr(resolved, "id", None), 555)
+
+    async def test_youprune_prefers_reply_target_over_message_at(self):
+        service = TelethonPruneService()
+        client = _FakeClient([_FakeMessage(299, sender_id=555)])
+        reply_target = types.SimpleNamespace(id=555, username="reply_user")
+        mention_target = types.SimpleNamespace(id=777, username="mention_user")
+        client.entities[777] = mention_target
+
+        resolved = await service.resolve_target_user(
+            _FakeEvent(
+                client,
+                reply_to_msg_id=250,
+                reply_sender=reply_target,
+                message_chain=[At(qq="777", name="mention_user")],
+            ),
+        )
+
+        self.assertEqual(getattr(resolved, "id", None), 555)
+
+    async def test_youprune_resolves_target_from_reply_sender_id_fallback(self):
+        service = TelethonPruneService()
+        client = _FakeClient([_FakeMessage(299, sender_id=555)])
+        client.entities[555] = types.SimpleNamespace(id=555, username="user555")
+        raw_message = types.SimpleNamespace(
+            get_reply_message=lambda: _awaitable(_ReplyMessageWithoutGetSender(sender_id=555))
+        )
+        event = types.SimpleNamespace(
+            client=client,
+            message_obj=types.SimpleNamespace(raw_message=raw_message, message=[], self_id="42"),
+        )
+
+        resolved = await service.resolve_target_user(event)
 
         self.assertEqual(getattr(resolved, "id", None), 555)
 
@@ -504,11 +604,30 @@ class TelethonPruneServiceTest(unittest.IsolatedAsyncioTestCase):
         finally:
             prune_service_module.PRUNE_FILTERED_SCAN_LIMIT = original_limit
 
-        self.assertEqual(result.scan_limit, 2)
-        self.assertTrue(result.hit_scan_limit)
+    async def test_youprune_topic_session_scans_only_current_thread(self):
+        service = TelethonPruneService()
+        client = _FakeClient(
+            [
+                _FakeMessage(299, sender_id=555),
+                _FakeMessage(298, sender_id=555),
+                _FakeMessage(297, sender_id=555),
+            ]
+        )
+        target_user = types.SimpleNamespace(id=555, username="user555")
+
+        result = await service.prune_messages(
+            _FakeEvent(client, reply_to_msg_id=250, thread_id=456, reply_sender=target_user),
+            2,
+            target_user=target_user,
+        )
+
+        self.assertEqual(result.deleted_count, 2)
+        self.assertEqual(client.iter_calls[0]["reply_to"], 456)
+        self.assertIs(client.iter_calls[0]["from_user"], target_user)
+        self.assertEqual(result.scan_limit, prune_service_module.PRUNE_FILTERED_SCAN_LIMIT)
+        self.assertFalse(result.hit_scan_limit)
         self.assertTrue(result.command_deleted)
         self.assertEqual(result.scanned_count, 2)
-        self.assertEqual(result.deleted_count, 1)
-        self.assertEqual(result.filtered_out_count, 1)
+        self.assertEqual(result.filtered_out_count, 0)
         self.assertEqual(result.skipped_count, 0)
-        self.assertEqual(client.delete_calls, [("peer:event", [300, 298], True)])
+        self.assertEqual(client.delete_calls, [("peer:event", [300, 299, 298], True)])
