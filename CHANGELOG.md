@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 - 2026-03-16
+
+### 新增 / Added
+
+- 增加 `zh-CN` / `en-US` 双语 i18n 资源，覆盖适配器 WebUI 配置文案、运行时回复文本与中英文 README。
+- 增加 `reply_to_self_triggers_command` 配置项，默认 `false`。开启后，仅群聊中“回复当前 Telethon 账号自己发出的消息”会被视为一次唤醒，并继续进入命令/消息处理流程。
+
+- Added bilingual `zh-CN` / `en-US` i18n resources covering WebUI configuration text, runtime responses, and Chinese/English READMEs.
+- Added the `reply_to_self_triggers_command` option, defaulting to `false`. When enabled, only group-chat replies to messages sent by the current Telethon account are treated as a wake-up trigger and continue into command or message handling.
+
+### 修复 / Fixed
+
+- 补全 thread/session 识别、topic root reply 处理，以及 topic 内发送和引用回复的 thread 透传。
+- 加固 `tg prune`、`tg selfprune`、`tg youprune`：增加更严格的全局删除锁与参数校验。
+- 修复 `trigger_prefix` 为空时的群聊唤醒行为，避免错误绕过 AstrBot 的群聊唤醒规则。
+
+- Added thread/session detection, topic root reply handling, and thread-aware sending plus quoted replies inside topics.
+- Hardened `tg prune`, `tg selfprune`, and `tg youprune`: Add stricter global deletion locking plus argument validation.
+- Fixed group wake-up behavior when `trigger_prefix` is empty so group messages no longer bypass AstrBot's own wake-up rules unintentionally.
+
 ## 0.4.0 - 2026-03-15
 
 ### 新增 / Added
