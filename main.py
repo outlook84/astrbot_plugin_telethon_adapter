@@ -9,6 +9,7 @@ from .plugin_info import (
     PLUGIN_REPO,
     PLUGIN_VERSION,
 )
+from .telethon_adapter.i18n import t
 from .telethon_adapter.services.profile_service import TelethonProfileService
 from .telethon_adapter.services import (
     TelethonPruneService,
@@ -35,7 +36,7 @@ class TelethonAdapterPlugin(Star):
     @filter.command_group("tg")
     @filter.permission_type(filter.PermissionType.ADMIN)
     def tg(self) -> None:
-        """Telethon 扩展命令。"""
+        """Telethon 扩展命令. Telethon extension commands."""
 
     def _log_command_debug(self, event: AstrMessageEvent, command: str, **kwargs: str) -> None:
         if not bool(getattr(event, "telethon_debug_logging", False)):
@@ -88,8 +89,8 @@ class TelethonAdapterPlugin(Star):
             event.set_result(text)
             return False
         except Exception as exc:
-            logger.exception("[Telethon] 发送结果失败", extra=log_kwargs or None)
-            event.set_result(f"发送结果失败: {exc}")
+            logger.exception("[Telethon] Failed to send result", extra=log_kwargs or None)
+            event.set_result(t(event, "errors.send_result_failed", error=exc))
             return False
         else:
             if auto_delete_after is not None:
@@ -146,7 +147,7 @@ class TelethonAdapterPlugin(Star):
         target: str = "",
     ) -> None:
         self._log_command_debug(event, log_name, target=target, count=count)
-        if not self._ensure_supported_event(event, "当前事件不来自 Telethon 适配器，无法执行批量删除。"):
+        if not self._ensure_supported_event(event, t(event, "errors.unsupported_prune")):
             return
 
         normalized_target = str(target or "").strip()
@@ -176,12 +177,12 @@ class TelethonAdapterPlugin(Star):
             return
         except Exception as exc:
             logger.exception(
-                "[Telethon] 执行 %s 失败: target=%r count=%r",
+                "[Telethon] Command %s failed: target=%r count=%r",
                 log_name.removeprefix("tg_"),
                 target,
                 count,
             )
-            event.set_result(f"批量删除失败: {exc}")
+            event.set_result(t(event, "errors.prune_failed", error=exc))
             return
 
         await self._send_text_result(
@@ -196,7 +197,7 @@ class TelethonAdapterPlugin(Star):
         *,
         log_name: str,
         unsupported_message: str,
-        failure_message: str,
+        failure_key: str,
         execute: callable,
         send_result: callable,
     ) -> None:
@@ -210,8 +211,8 @@ class TelethonAdapterPlugin(Star):
             event.set_result(str(exc))
             return
         except Exception as exc:
-            logger.exception("[Telethon] 执行 %s 失败", log_name.removeprefix("tg_"))
-            event.set_result(f"{failure_message}: {exc}")
+            logger.exception("[Telethon] Command %s failed", log_name.removeprefix("tg_"))
+            event.set_result(t(event, failure_key, error=exc))
             return
 
         sent = await send_result(payload)
@@ -225,7 +226,7 @@ class TelethonAdapterPlugin(Star):
         event: AstrMessageEvent,
         target: str = "",
     ) -> None:
-        """获取 Telegram 用户/群组/频道资料。tg profile [@username|id|t.me 链接]"""
+        """获取 Telegram 用户/群组/频道资料. Get Telegram user/group/channel profile. tg profile [@username|id|t.me link]"""
         async def _execute():
             return await self._profile_service.build_profile_payload(
                 event,
@@ -246,15 +247,15 @@ class TelethonAdapterPlugin(Star):
                 event.set_result(payload.text)
                 return False
             except Exception as exc:
-                logger.exception("[Telethon] 发送 profile 结果失败: target=%r", target)
-                event.set_result(f"发送资料失败: {exc}")
+                logger.exception("[Telethon] Failed to send profile result: target=%r", target)
+                event.set_result(t(event, "errors.profile_send_failed", error=exc))
                 return False
 
         await self._run_query_command(
             event,
             log_name="tg_profile",
-            unsupported_message="当前事件不来自 Telethon 适配器，无法获取 MTProto 资料。",
-            failure_message="获取资料失败",
+            unsupported_message=t(event, "errors.unsupported_profile"),
+            failure_key="errors.profile_failed",
             execute=_execute,
             send_result=_send,
         )
@@ -262,7 +263,7 @@ class TelethonAdapterPlugin(Star):
     @tg.command("status")
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def tg_status(self, event: AstrMessageEvent) -> None:
-        """获取当前 AstrBot 进程的运行状态。tg status"""
+        """获取当前 AstrBot 进程的运行状态. Show current AstrBot process status. tg status"""
         async def _execute():
             return await self._status_service.build_status_text(event)
 
@@ -272,8 +273,8 @@ class TelethonAdapterPlugin(Star):
         await self._run_query_command(
             event,
             log_name="tg_status",
-            unsupported_message="当前事件不来自 Telethon 适配器，无法获取状态信息。",
-            failure_message="获取状态失败",
+            unsupported_message=t(event, "errors.unsupported_status"),
+            failure_key="errors.status_failed",
             execute=_execute,
             send_result=_send,
         )
@@ -286,12 +287,12 @@ class TelethonAdapterPlugin(Star):
         arg1: str = "",
         arg2: str = "",
     ) -> None:
-        """设置默认贴纸包名，或把回复的图片/贴纸加入自己的贴纸包。tg sticker [pack_name|emoji] [emoji]"""
+        """设置默认贴纸包名，或把回复的图片/贴纸加入自己的贴纸包. Set default sticker pack or add replied media. tg sticker [pack_name|emoji] [emoji]"""
         self._log_command_debug(event, "tg_sticker", arg1=arg1, arg2=arg2)
         if not self._profile_service.supports_event(event):
             await self._send_text_result(
                 event,
-                "当前事件不来自 Telethon 适配器，无法执行贴纸操作。",
+                t(event, "errors.unsupported_sticker"),
                 auto_delete_after=PRUNE_RESULT_TTL_SECONDS,
             )
             return
@@ -306,10 +307,10 @@ class TelethonAdapterPlugin(Star):
             )
             return
         except Exception as exc:
-            logger.exception("[Telethon] 执行 sticker 失败: arg1=%r arg2=%r", arg1, arg2)
+            logger.exception("[Telethon] Sticker command failed: arg1=%r arg2=%r", arg1, arg2)
             await self._send_text_result(
                 event,
-                f"贴纸处理失败: {exc}",
+                t(event, "errors.sticker_failed", error=exc),
                 auto_delete_after=PRUNE_RESULT_TTL_SECONDS,
             )
             return
@@ -326,22 +327,22 @@ class TelethonAdapterPlugin(Star):
     @tg.command("prune")
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def tg_prune(self, event: AstrMessageEvent, count: str = "") -> None:
-        """批量删除当前会话中的最近消息。tg prune [数量]，回复某条消息时可省略数量。"""
+        """批量删除当前会话中的最近消息. Delete recent messages in current chat. tg prune [count], or reply to a message and omit count."""
         await self._run_prune_command(
             event,
             count=count,
-            usage_message="删除数量必须是正整数。用法: `tg prune 20`。",
+            usage_message=t(event, "prune.usage"),
             log_name="tg_prune",
         )
 
     @tg.command("selfprune")
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def tg_selfprune(self, event: AstrMessageEvent, count: str = "") -> None:
-        """仅删除自己发出的消息。tg selfprune [数量]，回复某条消息时可省略数量。"""
+        """仅删除自己发出的消息. Delete only your own messages. tg selfprune [count], or reply to a message and omit count."""
         await self._run_prune_command(
             event,
             count=count,
-            usage_message="删除数量必须是正整数。用法: `tg selfprune 20`。",
+            usage_message=t(event, "prune.self_usage"),
             log_name="tg_selfprune",
             only_self=True,
         )
@@ -354,14 +355,11 @@ class TelethonAdapterPlugin(Star):
         target: str = "",
         count: str = "",
     ) -> None:
-        """删除指定用户的消息。tg youprune [@username] [数量]，也支持配合 @ 提及或回复目标消息。"""
+        """删除指定用户的消息. Delete messages from a target user. tg youprune [@username] [count], or use a mention/reply."""
         await self._run_prune_command(
             event,
             count=count,
-            usage_message=(
-                "删除数量必须是正整数。用法: `tg youprune @username 20`，"
-                "或回复目标消息后执行 `tg youprune 20`。"
-            ),
+            usage_message=t(event, "prune.you_usage"),
             log_name="tg_youprune",
             target=target,
         )

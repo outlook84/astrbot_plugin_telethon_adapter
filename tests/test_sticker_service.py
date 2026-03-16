@@ -233,6 +233,19 @@ class TelethonStickerServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("MyPack", payload.text)
         self.assertEqual(kv_store.data, {"sticker_pack_name:telethon_a": "MyPack"})
 
+    async def test_handle_command_usage_with_default_uses_real_newlines(self):
+        kv_store = _FakeKVStore()
+        kv_store.data["sticker_pack_name:telethon_a"] = "MyPack"
+        service = TelethonStickerService(kv_store)
+        event = _FakeEvent(_FakeClient())
+
+        payload = await service.handle_command(event, "")
+
+        self.assertIn("当前默认贴纸包", payload.text)
+        self.assertIn("\n查看链接:", payload.text)
+        self.assertIn("\n用法:\n1.", payload.text)
+        self.assertNotIn("<br/>", payload.text)
+
     async def test_handle_command_adds_replied_photo_to_pack(self):
         image_buffer = BytesIO()
         Image.new("RGBA", (1024, 600), (255, 0, 0, 255)).save(image_buffer, format="PNG")

@@ -340,6 +340,25 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "proxy_host.*''.*代理主机"):
             adapter._validate_config()
 
+    def test_validate_config_reports_invalid_required_field_in_english(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": "bad",
+                "api_hash": "hash",
+                "session_string": "session",
+                "language": "en-US",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"api_id.*'bad'.*positive integer API ID",
+        ):
+            adapter._validate_config()
+
     def test_validate_config_requires_mtproto_proxy_secret(self):
         module = _load_adapter_module()
         adapter = module.TelethonPlatformAdapter(

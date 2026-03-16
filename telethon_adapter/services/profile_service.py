@@ -13,7 +13,14 @@ from astrbot.api.message_components import At
 from telethon import functions
 from telethon.tl import types
 
-from .data_center import format_data_center
+from ..i18n import (
+    PROFILE_LABELS,
+    PROFILE_TOKENS,
+    format_data_center_label,
+    get_event_language,
+    normalize_language,
+    t,
+)
 
 
 def _type_tuple(*names: str) -> tuple[type, ...]:
@@ -25,6 +32,101 @@ USER_TYPES = _type_tuple("User")
 CHAT_TYPES = _type_tuple("Chat", "ChatForbidden")
 CHANNEL_TYPES = _type_tuple("Channel", "ChannelForbidden")
 INPUT_SELF_TYPES = _type_tuple("InputPeerSelf")
+
+PROFILE_FIELD_LABEL_KEYS = {
+    "type": "类型",
+    "id": "ID",
+    "name": "名称",
+    "link": "链接",
+    "username": "用户名",
+    "display_name": "显示名",
+    "username_list": "用户名列表",
+    "data_center": "数据中心",
+    "phone": "手机号",
+    "bio": "简介",
+    "common_chats": "共同群组数",
+    "status": "状态",
+    "flags": "标记",
+    "language": "语言",
+    "emoji_status": "Emoji 状态",
+    "stories_max_id": "动态最大 ID",
+    "bot_active_users": "机器人活跃用户",
+    "bot_info_version": "机器人信息版本",
+    "bot_inline_placeholder": "Inline 占位文本",
+    "paid_message_stars": "付费消息星星数",
+    "blocked": "已拉黑",
+    "phone_calls_available": "可语音通话",
+    "phone_calls_private": "语音通话私密",
+    "video_calls_available": "可视频通话",
+    "voice_messages_forbidden": "禁止语音留言",
+    "can_pin_message": "可置顶消息",
+    "has_scheduled": "有定时消息",
+    "translations_disabled": "禁用翻译",
+    "stories_pinned_available": "动态置顶可用",
+    "blocked_my_stories_from": "屏蔽我的动态",
+    "read_dates_private": "私聊读回执",
+    "private_forward_name": "私聊转发名",
+    "ttl": "TTL",
+    "pinned_msg_id": "置顶消息 ID",
+    "folder_id": "文件夹 ID",
+    "personal_channel_id": "个人频道 ID",
+    "personal_channel_message": "个人频道消息",
+    "birthday": "生日",
+    "business_intro": "商业简介",
+    "business_location": "商业位置",
+    "business_work_hours": "商业营业时间",
+    "business_greeting_message": "商业欢迎消息",
+    "business_away_message": "商业离开消息",
+    "stargifts_count": "星礼物数量",
+    "stars_rating": "星星评分",
+    "stars_my_pending_rating": "我的待处理星星评分",
+    "visibility": "可见性",
+    "members": "成员数",
+    "online": "在线数",
+    "admins": "管理员数",
+    "kicked": "已踢人数",
+    "banned": "已封禁人数",
+    "invite_link": "邀请链接",
+    "created_at": "创建日期",
+    "version": "版本",
+    "migrated_to": "迁移到",
+    "default_banned_rights": "默认封禁权限",
+    "theme_emoticon": "主题表情",
+    "pending_requests": "待处理申请",
+    "recent_requesters": "最近申请者",
+    "available_reactions": "表情回应",
+    "reactions_limit": "回应上限",
+    "can_set_username": "可设置用户名",
+    "call": "群通话",
+    "groupcall_default_join_as": "默认加入身份",
+    "slowmode_seconds": "慢速模式(s)",
+    "linked_chat_id": "讨论组 ID",
+    "location": "地理位置",
+    "subscription_until_date": "订阅到期",
+    "level": "级别",
+    "linked_monoforum_id": "关联单话题 ID",
+    "restriction_reason": "限制原因",
+    "banned_rights": "当前限制规则",
+    "source_chat_id": "来源群 ID",
+    "source_chat_message_id": "来源群消息 ID",
+    "available_min_id": "最小可用消息 ID",
+    "slowmode_next_send_date": "慢速模式下次发送",
+    "pending_suggestions": "待处理建议",
+    "boosts_applied": "已应用助推",
+    "boosts_unrestrict": "助推解限",
+    "hidden_prehistory": "隐藏历史",
+    "antispam": "反垃圾",
+    "participants_hidden": "隐藏成员",
+    "view_forum_as_messages": "论坛视图为消息",
+    "restricted_sponsored": "限制赞助消息",
+    "can_view_revenue": "可看营收",
+    "paid_media_allowed": "允许付费媒体",
+    "can_view_stars_revenue": "可看星星营收",
+    "stargifts_available": "允许星礼物",
+    "paid_messages_available": "允许付费消息",
+    "default_send_as": "默认发送身份",
+    "access_hash": "访问哈希",
+}
 
 
 @dataclass(slots=True)
@@ -41,6 +143,24 @@ class ProfilePayload:
 
 
 class TelethonProfileService:
+    @staticmethod
+    def _profile_label(key: str, language: str) -> str:
+        zh_label = PROFILE_FIELD_LABEL_KEYS.get(key, key)
+        if normalize_language(language) == "en-US":
+            return PROFILE_LABELS.get(zh_label, zh_label)
+        return zh_label
+
+    @staticmethod
+    def _profile_token(text: str, language: str) -> str:
+        if normalize_language(language) == "en-US":
+            return PROFILE_TOKENS.get(text, text)
+        return text
+
+    @classmethod
+    def _profile_join(cls, items: list[str], language: str) -> str:
+        separator = ", " if normalize_language(language) == "en-US" else "、"
+        return separator.join(items)
+
     @staticmethod
     def supports_event(event: Any) -> bool:
         debug_logging = bool(getattr(event, "telethon_debug_logging", False))
@@ -80,16 +200,21 @@ class TelethonProfileService:
     ) -> ProfilePayload:
         client = getattr(event, "client", None)
         if client is None:
-            raise ValueError("当前事件没有可用的 Telethon client。")
+            raise ValueError(t(event, "profile.client_missing"))
 
         resolved = await self._resolve_profile(event, target)
+        language = get_event_language(event)
         avatar_path = await self._download_profile_photo(
             client,
             resolved.entity,
             resolved.full,
         )
         return ProfilePayload(
-            text=self._format_profile_text(resolved, detailed=detailed),
+            text=self._format_profile_text(
+                resolved,
+                detailed=detailed,
+                language=language,
+            ),
             avatar_path=avatar_path,
         )
 
@@ -133,7 +258,7 @@ class TelethonProfileService:
                     try:
                         chat = await get_chat()
                     except Exception:
-                        logger.debug("[Telethon] 拉取私聊对话对象失败", exc_info=True)
+                        logger.debug("[Telethon] Failed to fetch private chat peer", exc_info=True)
                     else:
                         if chat is not None:
                             return chat, "当前私聊对象"
@@ -143,7 +268,7 @@ class TelethonProfileService:
                     try:
                         return await client.get_entity(peer), "当前私聊对象"
                     except Exception:
-                        logger.debug("[Telethon] 通过 peer_id 解析私聊对象失败", exc_info=True)
+                        logger.debug("[Telethon] Failed to resolve private chat peer via peer_id", exc_info=True)
 
             sender_id = getattr(event, "get_sender_id", lambda: "")()
             if sender_id:
@@ -166,15 +291,12 @@ class TelethonProfileService:
                 return await client.get_entity(int(session_id)), "当前会话"
             except Exception:
                 logger.debug(
-                    "[Telethon] 使用 session_id 解析 profile 目标失败: session_id=%s",
+                    "[Telethon] Failed to resolve profile target via session_id: session_id=%s",
                     session_id,
                     exc_info=True,
                 )
 
-        raise ValueError(
-            "未找到可查询的目标。可传 @username / 数字 ID / t.me 链接，"
-            "也可以直接回复某条消息后再执行 `tg profile`。"
-        )
+        raise ValueError(t(event, "profile.resolve_failed"))
 
     async def _resolve_reply_entity(self, raw_message: Any) -> Any | None:
         get_reply_message = getattr(raw_message, "get_reply_message", None)
@@ -183,7 +305,7 @@ class TelethonProfileService:
         try:
             reply_message = await get_reply_message()
         except Exception:
-            logger.debug("[Telethon] 拉取回复消息失败，跳过 reply 目标解析", exc_info=True)
+            logger.debug("[Telethon] Failed to fetch replied message; skipping reply target resolution", exc_info=True)
             return None
         if reply_message is None:
             return None
@@ -193,7 +315,7 @@ class TelethonProfileService:
             try:
                 sender = await get_sender()
             except Exception:
-                logger.debug("[Telethon] 拉取 reply sender 失败", exc_info=True)
+                logger.debug("[Telethon] Failed to fetch reply sender", exc_info=True)
             else:
                 if sender is not None:
                     return sender
@@ -203,7 +325,7 @@ class TelethonProfileService:
             try:
                 chat = await get_chat()
             except Exception:
-                logger.debug("[Telethon] 拉取 reply chat 失败", exc_info=True)
+                logger.debug("[Telethon] Failed to fetch reply chat", exc_info=True)
             else:
                 if chat is not None:
                     return chat
@@ -222,7 +344,7 @@ class TelethonProfileService:
                 lookup = int(qq) if qq.isdigit() else qq
                 return await client.get_entity(lookup)
             except Exception:
-                logger.debug("[Telethon] 解析 @ 提及目标失败: qq=%s", qq, exc_info=True)
+                logger.debug("[Telethon] Failed to resolve @mention target: qq=%s", qq, exc_info=True)
         return None
 
     async def _fetch_full_entity(self, client: Any, entity: Any) -> Any | None:
@@ -240,7 +362,7 @@ class TelethonProfileService:
                 return getattr(result, "full_chat", result)
         except Exception:
             logger.warning(
-                "[Telethon] 获取完整 profile 失败: entity_type=%s entity_id=%s",
+                "[Telethon] Failed to fetch full profile: entity_type=%s entity_id=%s",
                 type(entity).__name__,
                 getattr(entity, "id", None),
                 exc_info=True,
@@ -252,32 +374,34 @@ class TelethonProfileService:
         cls,
         resolved: ResolvedProfile,
         detailed: bool = False,
+        language: str = "zh-CN",
     ) -> str:
         entity = resolved.entity
         full = resolved.full
         lines: list[str] = []
 
         if USER_TYPES and isinstance(entity, USER_TYPES):
-            cls._append_user_lines(lines, entity, full, detailed=detailed)
+            cls._append_user_lines(lines, entity, full, detailed=detailed, language=language)
         elif CHAT_TYPES and isinstance(entity, CHAT_TYPES):
-            cls._append_chat_lines(lines, entity, full, detailed=detailed)
+            cls._append_chat_lines(lines, entity, full, detailed=detailed, language=language)
         elif CHANNEL_TYPES and isinstance(entity, CHANNEL_TYPES):
-            cls._append_channel_lines(lines, entity, full, detailed=detailed)
+            cls._append_channel_lines(lines, entity, full, detailed=detailed, language=language)
         else:
-            cls._append_field(lines, "类型", cls._entity_kind(entity))
-            cls._append_field(lines, "ID", getattr(entity, "id", None))
-            cls._append_field(lines, "名称", cls._display_name(entity))
-            cls._append_field(lines, "链接", cls._format_entity_link(entity, full))
-            cls._append_field(lines, "用户名", getattr(entity, "username", None))
-            cls._append_field(lines, "显示名", cls._display_name(entity))
+            cls._append_field(lines, "type", cls._entity_kind(entity), language)
+            cls._append_field(lines, "id", getattr(entity, "id", None), language)
+            cls._append_field(lines, "name", cls._display_name(entity), language)
+            cls._append_field(lines, "link", cls._format_entity_link(entity, full), language)
+            cls._append_field(lines, "username", getattr(entity, "username", None), language)
+            cls._append_field(lines, "display_name", cls._display_name(entity), language)
             if detailed:
                 cls._append_generic_fields(
                     lines,
                     entity,
                     (
-                        ("创建日期", "date"),
-                        ("访问哈希", "access_hash"),
+                        ("created_at", "date"),
+                        ("access_hash", "access_hash"),
                     ),
+                    language,
                 )
 
         return "\n".join(lines).strip()
@@ -289,19 +413,25 @@ class TelethonProfileService:
         entity: Any,
         full: Any | None,
         detailed: bool = False,
+        language: str = "zh-CN",
     ) -> None:
         lines.append("")
-        cls._append_field(lines, "类型", "机器人" if getattr(entity, "bot", False) else "用户")
-        cls._append_field(lines, "ID", getattr(entity, "id", None))
-        cls._append_field(lines, "显示名", cls._display_name(entity))
-        cls._append_field(lines, "用户名", cls._primary_username(entity))
-        cls._append_field(lines, "链接", cls._format_entity_link(entity, full))
-        cls._append_field(lines, "用户名列表", cls._format_usernames(entity))
-        cls._append_field(lines, "数据中心", cls._infer_data_center(entity, full))
-        cls._append_phone_field(lines, entity)
-        cls._append_field(lines, "简介", getattr(full, "about", None))
-        cls._append_field(lines, "共同群组数", getattr(full, "common_chats_count", None))
-        cls._append_field(lines, "状态", cls._user_status(entity))
+        cls._append_field(
+            lines,
+            "type",
+            cls._profile_token("机器人" if getattr(entity, "bot", False) else "用户", language),
+            language,
+        )
+        cls._append_field(lines, "id", getattr(entity, "id", None), language)
+        cls._append_field(lines, "display_name", cls._display_name(entity), language)
+        cls._append_field(lines, "username", cls._primary_username(entity), language)
+        cls._append_field(lines, "link", cls._format_entity_link(entity, full), language)
+        cls._append_field(lines, "username_list", cls._format_usernames(entity), language)
+        cls._append_field(lines, "data_center", cls._infer_data_center(entity, full, language), language)
+        cls._append_phone_field(lines, entity, language)
+        cls._append_field(lines, "bio", getattr(full, "about", None), language)
+        cls._append_field(lines, "common_chats", getattr(full, "common_chats_count", None), language)
+        cls._append_field(lines, "status", cls._user_status(entity, language), language)
         cls._append_flags(
             lines,
             entity,
@@ -316,20 +446,22 @@ class TelethonProfileService:
                 ("support", "官方支持"),
                 ("deleted", "已删除"),
             ),
+            language,
         )
         if detailed:
             cls._append_generic_fields(
                 lines,
                 entity,
                 (
-                    ("语言", "lang_code"),
-                    ("Emoji 状态", "emoji_status"),
-                    ("动态最大 ID", "stories_max_id"),
-                    ("机器人活跃用户", "bot_active_users"),
-                    ("机器人信息版本", "bot_info_version"),
-                    ("Inline 占位文本", "bot_inline_placeholder"),
-                    ("付费消息星星数", "send_paid_messages_stars"),
+                    ("language", "lang_code"),
+                    ("emoji_status", "emoji_status"),
+                    ("stories_max_id", "stories_max_id"),
+                    ("bot_active_users", "bot_active_users"),
+                    ("bot_info_version", "bot_info_version"),
+                    ("bot_inline_placeholder", "bot_inline_placeholder"),
+                    ("paid_message_stars", "send_paid_messages_stars"),
                 ),
+                language,
             )
             cls._append_flags(
                 lines,
@@ -349,38 +481,40 @@ class TelethonProfileService:
                     ("bot_has_main_app", "机器人主应用"),
                     ("bot_forum_view", "机器人论坛视图"),
                 ),
+                language,
             )
             cls._append_generic_fields(
                 lines,
                 full,
                 (
-                    ("已拉黑", "blocked"),
-                    ("可语音通话", "phone_calls_available"),
-                    ("语音通话私密", "phone_calls_private"),
-                    ("可视频通话", "video_calls_available"),
-                    ("禁止语音留言", "voice_messages_forbidden"),
-                    ("可置顶消息", "can_pin_message"),
-                    ("有定时消息", "has_scheduled"),
-                    ("禁用翻译", "translations_disabled"),
-                    ("动态置顶可用", "stories_pinned_available"),
-                    ("屏蔽我的动态", "blocked_my_stories_from"),
-                    ("私聊读回执", "read_dates_private"),
-                    ("私聊转发名", "private_forward_name"),
-                    ("TTL", "ttl_period"),
-                    ("置顶消息 ID", "pinned_msg_id"),
-                    ("文件夹 ID", "folder_id"),
-                    ("个人频道 ID", "personal_channel_id"),
-                    ("个人频道消息", "personal_channel_message"),
-                    ("生日", "birthday"),
-                    ("商业简介", "business_intro"),
-                    ("商业位置", "business_location"),
-                    ("商业营业时间", "business_work_hours"),
-                    ("商业欢迎消息", "business_greeting_message"),
-                    ("商业离开消息", "business_away_message"),
-                    ("星礼物数量", "stargifts_count"),
-                    ("星星评分", "stars_rating"),
-                    ("我的待处理星星评分", "stars_my_pending_rating"),
+                    ("blocked", "blocked"),
+                    ("phone_calls_available", "phone_calls_available"),
+                    ("phone_calls_private", "phone_calls_private"),
+                    ("video_calls_available", "video_calls_available"),
+                    ("voice_messages_forbidden", "voice_messages_forbidden"),
+                    ("can_pin_message", "can_pin_message"),
+                    ("has_scheduled", "has_scheduled"),
+                    ("translations_disabled", "translations_disabled"),
+                    ("stories_pinned_available", "stories_pinned_available"),
+                    ("blocked_my_stories_from", "blocked_my_stories_from"),
+                    ("read_dates_private", "read_dates_private"),
+                    ("private_forward_name", "private_forward_name"),
+                    ("ttl", "ttl_period"),
+                    ("pinned_msg_id", "pinned_msg_id"),
+                    ("folder_id", "folder_id"),
+                    ("personal_channel_id", "personal_channel_id"),
+                    ("personal_channel_message", "personal_channel_message"),
+                    ("birthday", "birthday"),
+                    ("business_intro", "business_intro"),
+                    ("business_location", "business_location"),
+                    ("business_work_hours", "business_work_hours"),
+                    ("business_greeting_message", "business_greeting_message"),
+                    ("business_away_message", "business_away_message"),
+                    ("stargifts_count", "stargifts_count"),
+                    ("stars_rating", "stars_rating"),
+                    ("stars_my_pending_rating", "stars_my_pending_rating"),
                 ),
+                language,
             )
 
     @classmethod
@@ -390,27 +524,29 @@ class TelethonProfileService:
         entity: Any,
         full: Any | None,
         detailed: bool = False,
+        language: str = "zh-CN",
     ) -> None:
         lines.append("")
-        cls._append_field(lines, "ID", getattr(entity, "id", None))
-        cls._append_field(lines, "名称", cls._display_name(entity))
-        cls._append_field(lines, "链接", cls._format_entity_link(entity, full))
-        cls._append_field(lines, "可见性", cls._entity_visibility(entity, full))
-        cls._append_field(lines, "类型", "基础群组")
-        cls._append_field(lines, "数据中心", cls._infer_data_center(entity, full))
-        cls._append_field(lines, "成员数", getattr(full, "participants_count", None))
-        cls._append_field(lines, "在线数", getattr(full, "online_count", None))
-        cls._append_field(lines, "管理员数", getattr(full, "admins_count", None))
-        cls._append_field(lines, "已踢人数", getattr(full, "kicked_count", None))
-        cls._append_field(lines, "已封禁人数", getattr(full, "banned_count", None))
-        cls._append_field(lines, "简介", getattr(full, "about", None))
-        cls._append_field(lines, "邀请链接", getattr(full, "exported_invite", None))
+        cls._append_field(lines, "id", getattr(entity, "id", None), language)
+        cls._append_field(lines, "name", cls._display_name(entity), language)
+        cls._append_field(lines, "link", cls._format_entity_link(entity, full), language)
+        cls._append_field(lines, "visibility", cls._entity_visibility(entity, full, language), language)
+        cls._append_field(lines, "type", cls._profile_token("基础群组", language), language)
+        cls._append_field(lines, "data_center", cls._infer_data_center(entity, full, language), language)
+        cls._append_field(lines, "members", getattr(full, "participants_count", None), language)
+        cls._append_field(lines, "online", getattr(full, "online_count", None), language)
+        cls._append_field(lines, "admins", getattr(full, "admins_count", None), language)
+        cls._append_field(lines, "kicked", getattr(full, "kicked_count", None), language)
+        cls._append_field(lines, "banned", getattr(full, "banned_count", None), language)
+        cls._append_field(lines, "bio", getattr(full, "about", None), language)
+        cls._append_field(lines, "invite_link", getattr(full, "exported_invite", None), language)
         cls._append_flags(
             lines,
             entity,
             (
                 ("deactivated", "已停用"),
             ),
+            language,
         )
         if detailed:
             cls._append_flags(
@@ -421,35 +557,38 @@ class TelethonProfileService:
                     ("call_not_empty", "通话非空"),
                     ("noforwards", "禁止转发"),
                 ),
+                language,
             )
             cls._append_generic_fields(
                 lines,
                 entity,
                 (
-                    ("创建日期", "date"),
-                    ("版本", "version"),
-                    ("迁移到", "migrated_to"),
-                    ("默认封禁权限", "default_banned_rights"),
+                    ("created_at", "date"),
+                    ("version", "version"),
+                    ("migrated_to", "migrated_to"),
+                    ("default_banned_rights", "default_banned_rights"),
                 ),
+                language,
             )
             cls._append_generic_fields(
                 lines,
                 full,
                 (
-                    ("置顶消息 ID", "pinned_msg_id"),
-                    ("文件夹 ID", "folder_id"),
-                    ("TTL", "ttl_period"),
-                    ("主题表情", "theme_emoticon"),
-                    ("待处理申请", "requests_pending"),
-                    ("最近申请者", "recent_requesters"),
-                    ("表情回应", "available_reactions"),
-                    ("回应上限", "reactions_limit"),
-                    ("可设置用户名", "can_set_username"),
-                    ("有定时消息", "has_scheduled"),
-                    ("禁用翻译", "translations_disabled"),
-                    ("群通话", "call"),
-                    ("默认加入身份", "groupcall_default_join_as"),
+                    ("pinned_msg_id", "pinned_msg_id"),
+                    ("folder_id", "folder_id"),
+                    ("ttl", "ttl_period"),
+                    ("theme_emoticon", "theme_emoticon"),
+                    ("pending_requests", "requests_pending"),
+                    ("recent_requesters", "recent_requesters"),
+                    ("available_reactions", "available_reactions"),
+                    ("reactions_limit", "reactions_limit"),
+                    ("can_set_username", "can_set_username"),
+                    ("has_scheduled", "has_scheduled"),
+                    ("translations_disabled", "translations_disabled"),
+                    ("call", "call"),
+                    ("groupcall_default_join_as", "groupcall_default_join_as"),
                 ),
+                language,
             )
 
     @classmethod
@@ -459,24 +598,25 @@ class TelethonProfileService:
         entity: Any,
         full: Any | None,
         detailed: bool = False,
+        language: str = "zh-CN",
     ) -> None:
         lines.append("")
-        cls._append_field(lines, "ID", getattr(entity, "id", None))
-        cls._append_field(lines, "名称", cls._display_name(entity))
-        cls._append_field(lines, "链接", cls._format_entity_link(entity, full))
-        cls._append_field(lines, "可见性", cls._entity_visibility(entity, full))
-        cls._append_field(lines, "类型", cls._channel_kind(entity))
-        cls._append_field(lines, "数据中心", cls._infer_data_center(entity, full))
-        cls._append_field(lines, "简介", getattr(full, "about", None))
-        cls._append_field(lines, "成员数", getattr(full, "participants_count", None))
-        cls._append_field(lines, "在线数", getattr(full, "online_count", None))
-        cls._append_field(lines, "管理员数", getattr(full, "admins_count", None))
-        cls._append_field(lines, "已踢人数", getattr(full, "kicked_count", None))
-        cls._append_field(lines, "已封禁人数", getattr(full, "banned_count", None))
-        cls._append_field(lines, "慢速模式(s)", getattr(full, "slowmode_seconds", None))
-        cls._append_field(lines, "讨论组 ID", getattr(full, "linked_chat_id", None))
-        cls._append_field(lines, "地理位置", cls._format_location(getattr(full, "location", None)))
-        cls._append_field(lines, "邀请链接", getattr(full, "exported_invite", None))
+        cls._append_field(lines, "id", getattr(entity, "id", None), language)
+        cls._append_field(lines, "name", cls._display_name(entity), language)
+        cls._append_field(lines, "link", cls._format_entity_link(entity, full), language)
+        cls._append_field(lines, "visibility", cls._entity_visibility(entity, full, language), language)
+        cls._append_field(lines, "type", cls._channel_kind(entity, language), language)
+        cls._append_field(lines, "data_center", cls._infer_data_center(entity, full, language), language)
+        cls._append_field(lines, "bio", getattr(full, "about", None), language)
+        cls._append_field(lines, "members", getattr(full, "participants_count", None), language)
+        cls._append_field(lines, "online", getattr(full, "online_count", None), language)
+        cls._append_field(lines, "admins", getattr(full, "admins_count", None), language)
+        cls._append_field(lines, "kicked", getattr(full, "kicked_count", None), language)
+        cls._append_field(lines, "banned", getattr(full, "banned_count", None), language)
+        cls._append_field(lines, "slowmode_seconds", getattr(full, "slowmode_seconds", None), language)
+        cls._append_field(lines, "linked_chat_id", getattr(full, "linked_chat_id", None), language)
+        cls._append_field(lines, "location", cls._format_location(getattr(full, "location", None)), language)
+        cls._append_field(lines, "invite_link", getattr(full, "exported_invite", None), language)
         cls._append_flags(
             lines,
             entity,
@@ -486,6 +626,7 @@ class TelethonProfileService:
                 ("scam", "诈骗风险"),
                 ("fake", "伪装频道"),
             ),
+            language,
         )
         if detailed:
             cls._append_flags(
@@ -509,57 +650,60 @@ class TelethonProfileService:
                     ("autotranslation", "自动翻译"),
                     ("broadcast_messages_allowed", "允许频道发言"),
                 ),
+                language,
             )
             cls._append_generic_fields(
                 lines,
                 entity,
                 (
-                    ("创建日期", "date"),
-                    ("动态最大 ID", "stories_max_id"),
-                    ("订阅到期", "subscription_until_date"),
-                    ("级别", "level"),
-                    ("关联单话题 ID", "linked_monoforum_id"),
-                    ("限制原因", "restriction_reason"),
-                    ("当前限制规则", "banned_rights"),
-                    ("默认成员限制", "default_banned_rights"),
+                    ("created_at", "date"),
+                    ("stories_max_id", "stories_max_id"),
+                    ("subscription_until_date", "subscription_until_date"),
+                    ("level", "level"),
+                    ("linked_monoforum_id", "linked_monoforum_id"),
+                    ("restriction_reason", "restriction_reason"),
+                    ("banned_rights", "banned_rights"),
+                    ("default_banned_rights", "default_banned_rights"),
                 ),
+                language,
             )
             cls._append_generic_fields(
                 lines,
                 full,
                 (
-                    ("来源群 ID", "migrated_from_chat_id"),
-                    ("来源群消息 ID", "migrated_from_max_id"),
-                    ("最小可用消息 ID", "available_min_id"),
-                    ("文件夹 ID", "folder_id"),
-                    ("慢速模式下次发送", "slowmode_next_send_date"),
-                    ("TTL", "ttl_period"),
-                    ("待处理建议", "pending_suggestions"),
-                    ("待处理申请", "requests_pending"),
-                    ("最近申请者", "recent_requesters"),
-                    ("回应上限", "reactions_limit"),
-                    ("已应用助推", "boosts_applied"),
-                    ("助推解限", "boosts_unrestrict"),
-                    ("星礼物数量", "stargifts_count"),
-                    ("付费消息星星数", "send_paid_messages_stars"),
-                    ("隐藏历史", "hidden_prehistory"),
-                    ("有定时消息", "has_scheduled"),
-                    ("已拉黑", "blocked"),
-                    ("反垃圾", "antispam"),
-                    ("隐藏成员", "participants_hidden"),
-                    ("禁用翻译", "translations_disabled"),
-                    ("动态置顶可用", "stories_pinned_available"),
-                    ("论坛视图为消息", "view_forum_as_messages"),
-                    ("限制赞助消息", "restricted_sponsored"),
-                    ("可看营收", "can_view_revenue"),
-                    ("允许付费媒体", "paid_media_allowed"),
-                    ("可看星星营收", "can_view_stars_revenue"),
-                    ("允许星礼物", "stargifts_available"),
-                    ("允许付费消息", "paid_messages_available"),
-                    ("默认发送身份", "default_send_as"),
-                    ("表情回应", "available_reactions"),
-                    ("主题表情", "theme_emoticon"),
+                    ("source_chat_id", "migrated_from_chat_id"),
+                    ("source_chat_message_id", "migrated_from_max_id"),
+                    ("available_min_id", "available_min_id"),
+                    ("folder_id", "folder_id"),
+                    ("slowmode_next_send_date", "slowmode_next_send_date"),
+                    ("ttl", "ttl_period"),
+                    ("pending_suggestions", "pending_suggestions"),
+                    ("pending_requests", "requests_pending"),
+                    ("recent_requesters", "recent_requesters"),
+                    ("reactions_limit", "reactions_limit"),
+                    ("boosts_applied", "boosts_applied"),
+                    ("boosts_unrestrict", "boosts_unrestrict"),
+                    ("stargifts_count", "stargifts_count"),
+                    ("paid_message_stars", "send_paid_messages_stars"),
+                    ("hidden_prehistory", "hidden_prehistory"),
+                    ("has_scheduled", "has_scheduled"),
+                    ("blocked", "blocked"),
+                    ("antispam", "antispam"),
+                    ("participants_hidden", "participants_hidden"),
+                    ("translations_disabled", "translations_disabled"),
+                    ("stories_pinned_available", "stories_pinned_available"),
+                    ("view_forum_as_messages", "view_forum_as_messages"),
+                    ("restricted_sponsored", "restricted_sponsored"),
+                    ("can_view_revenue", "can_view_revenue"),
+                    ("paid_media_allowed", "paid_media_allowed"),
+                    ("can_view_stars_revenue", "can_view_stars_revenue"),
+                    ("stargifts_available", "stargifts_available"),
+                    ("paid_messages_available", "paid_messages_available"),
+                    ("default_send_as", "default_send_as"),
+                    ("available_reactions", "available_reactions"),
+                    ("theme_emoticon", "theme_emoticon"),
                 ),
+                language,
             )
 
     @staticmethod
@@ -639,18 +783,23 @@ class TelethonProfileService:
         return None
 
     @classmethod
-    def _entity_visibility(cls, entity: Any, full: Any | None = None) -> str | None:
+    def _entity_visibility(
+        cls,
+        entity: Any,
+        full: Any | None = None,
+        language: str = "zh-CN",
+    ) -> str | None:
         if USER_TYPES and isinstance(entity, USER_TYPES):
             return None
 
         if cls._entity_link(entity):
-            return "公开"
+            return cls._profile_token("公开", language)
 
         if getattr(full, "exported_invite", None) is not None:
-            return "私有"
+            return cls._profile_token("私有", language)
 
         if CHAT_TYPES and isinstance(entity, CHAT_TYPES):
-            return "私有"
+            return cls._profile_token("私有", language)
 
         return None
 
@@ -674,36 +823,40 @@ class TelethonProfileService:
         return ", ".join(values)
 
     @staticmethod
-    def _user_status(entity: Any) -> str | None:
+    def _user_status(entity: Any, language: str = "zh-CN") -> str | None:
         status = getattr(entity, "status", None)
         if status is None:
             return None
         status_name = type(status).__name__
         until = getattr(status, "was_online", None) or getattr(status, "expires", None)
         status_map = {
-            "UserStatusOnline": "在线",
-            "UserStatusOffline": "离线",
-            "UserStatusRecently": "最近活跃",
-            "UserStatusLastWeek": "一周内活跃",
-            "UserStatusLastMonth": "一月内活跃",
-            "UserStatusEmpty": "状态未知",
+            "UserStatusOnline": TelethonProfileService._profile_token("在线", language),
+            "UserStatusOffline": TelethonProfileService._profile_token("离线", language),
+            "UserStatusRecently": TelethonProfileService._profile_token("最近活跃", language),
+            "UserStatusLastWeek": TelethonProfileService._profile_token("一周内活跃", language),
+            "UserStatusLastMonth": TelethonProfileService._profile_token("一月内活跃", language),
+            "UserStatusEmpty": TelethonProfileService._profile_token("状态未知", language),
         }
         display = status_map.get(status_name, status_name)
         if status_name == "UserStatusOffline" and until:
+            if normalize_language(language) == "en-US":
+                return f"{display} (last seen {TelethonProfileService._format_datetime(until)})"
             return f"{display}（最后上线 {TelethonProfileService._format_datetime(until)}）"
         if status_name == "UserStatusOnline" and until:
+            if normalize_language(language) == "en-US":
+                return f"{display} (valid until {TelethonProfileService._format_datetime(until)})"
             return f"{display}（状态有效至 {TelethonProfileService._format_datetime(until)}）"
         return display
 
-    @staticmethod
-    def _channel_kind(entity: Any) -> str:
+    @classmethod
+    def _channel_kind(cls, entity: Any, language: str = "zh-CN") -> str:
         if getattr(entity, "broadcast", False):
-            return "频道"
+            return cls._profile_token("频道", language)
         if getattr(entity, "gigagroup", False):
-            return "广播群组"
+            return cls._profile_token("广播群组", language)
         if getattr(entity, "megagroup", False):
-            return "超级群组"
-        return "频道/群组"
+            return cls._profile_token("超级群组", language)
+        return cls._profile_token("频道/群组", language)
 
     @staticmethod
     def _format_location(location: Any) -> str | None:
@@ -739,35 +892,40 @@ class TelethonProfileService:
         return str(value)
 
     @classmethod
-    def _format_invite(cls, invite: Any) -> str | None:
+    def _format_invite(cls, invite: Any, language: str = "zh-CN") -> str | None:
         if invite is None:
             return None
 
         link = getattr(invite, "link", None)
         if isinstance(link, str) and link.strip():
-            parts = ["🙈 已隐藏"]
+            parts = [cls._profile_token("🙈 已隐藏", language)]
             detail_parts = []
 
             title = getattr(invite, "title", None)
             if title:
-                detail_parts.append(f"标题={title}")
+                prefix = cls._profile_token("标题=", language)
+                detail_parts.append(f"{prefix}{title}")
 
             if getattr(invite, "permanent", False):
-                detail_parts.append("永久")
+                detail_parts.append(cls._profile_token("永久", language))
             if getattr(invite, "revoked", False):
-                detail_parts.append("已撤销")
+                detail_parts.append(cls._profile_token("已撤销", language))
             if getattr(invite, "request_needed", False):
-                detail_parts.append("需审核")
+                detail_parts.append(cls._profile_token("需审核", language))
 
             usage = getattr(invite, "usage", None)
             usage_limit = getattr(invite, "usage_limit", None)
             if usage is not None or usage_limit is not None:
-                limit_text = usage_limit if usage_limit is not None else "不限"
-                detail_parts.append(f"使用次数={usage or 0}/{limit_text}")
+                limit_text = usage_limit if usage_limit is not None else cls._profile_token("不限", language)
+                detail_parts.append(
+                    f"{cls._profile_token('使用次数=', language)}{usage or 0}/{limit_text}"
+                )
 
             expire_date = getattr(invite, "expire_date", None)
             if expire_date:
-                detail_parts.append(f"过期时间={cls._format_datetime(expire_date)}")
+                detail_parts.append(
+                    f"{cls._profile_token('过期时间=', language)}{cls._format_datetime(expire_date)}"
+                )
 
             if detail_parts:
                 parts.append(f"({' ; '.join(detail_parts)})")
@@ -776,7 +934,7 @@ class TelethonProfileService:
         return None
 
     @classmethod
-    def _format_admin_rights(cls, rights: Any) -> str | None:
+    def _format_admin_rights(cls, rights: Any, language: str = "zh-CN") -> str | None:
         if rights is None or type(rights).__name__ != "ChatAdminRights":
             return None
         mappings = (
@@ -796,13 +954,17 @@ class TelethonProfileService:
             ("delete_stories", "删除动态"),
             ("manage_direct_messages", "管理私信"),
         )
-        enabled = [label for attr, label in mappings if getattr(rights, attr, False)]
+        enabled = [
+            cls._profile_token(label, language)
+            for attr, label in mappings
+            if getattr(rights, attr, False)
+        ]
         if getattr(rights, "other", False):
-            enabled.append("其它管理权限")
-        return "、".join(enabled) if enabled else "无"
+            enabled.append(cls._profile_token("其它管理权限", language))
+        return cls._profile_join(enabled, language) if enabled else cls._profile_token("无", language)
 
     @classmethod
-    def _format_banned_rights(cls, rights: Any) -> str | None:
+    def _format_banned_rights(cls, rights: Any, language: str = "zh-CN") -> str | None:
         if rights is None or type(rights).__name__ != "ChatBannedRights":
             return None
         denied_mappings = (
@@ -827,22 +989,28 @@ class TelethonProfileService:
             ("send_docs", "发送文档"),
             ("send_plain", "发送纯文本"),
         )
-        denied = [label for attr, label in denied_mappings if getattr(rights, attr, False)]
+        denied = [
+            cls._profile_token(label, language)
+            for attr, label in denied_mappings
+            if getattr(rights, attr, False)
+        ]
         until = getattr(rights, "until_date", None)
-        until_text = cls._format_until_date(until)
+        until_text = cls._format_until_date(until, language)
         if denied:
-            return f"{until_text}；限制: {'、'.join(denied)}"
+            if normalize_language(language) == "en-US":
+                return f"{until_text}; Restrictions: {cls._profile_join(denied, language)}"
+            return f"{until_text}；限制: {cls._profile_join(denied, language)}"
         return until_text
 
     @classmethod
-    def _format_until_date(cls, value: Any) -> str:
+    def _format_until_date(cls, value: Any, language: str = "zh-CN") -> str:
         if not value:
-            return "未设置时限"
+            return cls._profile_token("未设置时限", language)
         if isinstance(value, datetime):
             if value.year >= 2038:
-                return "长期有效"
-            return f"至 {cls._format_datetime(value)}"
-        return f"至 {value}"
+                return cls._profile_token("长期有效", language)
+            return f"{cls._profile_token('至 ', language)}{cls._format_datetime(value)}"
+        return f"{cls._profile_token('至 ', language)}{value}"
 
     @classmethod
     def _format_restriction_reason(cls, value: Any) -> str | None:
@@ -859,14 +1027,18 @@ class TelethonProfileService:
         return "；".join(parts) if parts else None
 
     @classmethod
-    def _format_chat_reactions(cls, value: Any) -> str | None:
+    def _format_chat_reactions(cls, value: Any, language: str = "zh-CN") -> str | None:
         if value is None:
             return None
         type_name = type(value).__name__
         if type_name == "ChatReactionsNone":
-            return "不允许"
+            return cls._profile_token("不允许", language)
         if type_name == "ChatReactionsAll":
-            return "允许所有（含自定义）" if getattr(value, "allow_custom", False) else "允许所有"
+            return (
+                cls._profile_token("允许所有（含自定义）", language)
+                if getattr(value, "allow_custom", False)
+                else cls._profile_token("允许所有", language)
+            )
         if type_name == "ChatReactionsSome":
             reactions = getattr(value, "reactions", None) or []
             parts = []
@@ -877,12 +1049,14 @@ class TelethonProfileService:
                     continue
                 document_id = getattr(reaction, "document_id", None)
                 if document_id is not None:
-                    parts.append(f"自定义表情 {document_id}")
-            return f"允许部分：{'、'.join(parts)}" if parts else "允许部分"
+                    parts.append(f"{cls._profile_token('自定义表情 ', language)}{document_id}")
+            if parts:
+                return f"{cls._profile_token('允许部分：', language)}{cls._profile_join(parts, language)}"
+            return cls._profile_token("允许部分", language)
         return None
 
     @classmethod
-    def _format_emoji_status(cls, value: Any) -> str | None:
+    def _format_emoji_status(cls, value: Any, language: str = "zh-CN") -> str | None:
         if value is None:
             return None
         type_name = type(value).__name__
@@ -891,10 +1065,10 @@ class TelethonProfileService:
 
         until = getattr(value, "until", None)
         if until:
-            return f"有效期至 {cls._format_datetime(until)}"
+            return f"{cls._profile_token('有效期至 ', language)}{cls._format_datetime(until)}"
         if type_name == "EmojiStatus":
-            return "长期"
-        return "已设置"
+            return cls._profile_token("长期", language)
+        return cls._profile_token("已设置", language)
 
     async def _download_profile_photo(
         self,
@@ -912,7 +1086,7 @@ class TelethonProfileService:
                 return self._resize_avatar(path)
         except Exception:
             logger.debug(
-                "[Telethon] 下载头像失败: entity_type=%s entity_id=%s",
+                "[Telethon] Failed to download avatar: entity_type=%s entity_id=%s",
                 type(entity).__name__,
                 getattr(entity, "id", None),
                 exc_info=True,
@@ -928,7 +1102,7 @@ class TelethonProfileService:
                     return self._resize_avatar(path)
             except Exception:
                 logger.debug(
-                    "[Telethon] 使用 full photo 下载头像失败: entity_type=%s entity_id=%s",
+                    "[Telethon] Failed to download avatar via full photo: entity_type=%s entity_id=%s",
                     type(entity).__name__,
                     getattr(entity, "id", None),
                     exc_info=True,
@@ -961,11 +1135,11 @@ class TelethonProfileService:
                     save_kwargs.update({"format": "WEBP", "quality": 95})
                 resized.save(path, **save_kwargs)
         except Exception:
-            logger.debug("[Telethon] 缩放头像失败: path=%s", path, exc_info=True)
+            logger.debug("[Telethon] Failed to resize avatar: path=%s", path, exc_info=True)
         return path
 
     @classmethod
-    def _stringify_value(cls, value: Any) -> Any:
+    def _stringify_value(cls, value: Any, language: str = "zh-CN") -> Any:
         if value is None:
             return None
         if isinstance(value, bool):
@@ -975,15 +1149,15 @@ class TelethonProfileService:
         if isinstance(value, datetime):
             return cls._format_datetime(value)
 
-        invite_text = cls._format_invite(value)
+        invite_text = cls._format_invite(value, language)
         if invite_text:
             return invite_text
 
-        admin_rights_text = cls._format_admin_rights(value)
+        admin_rights_text = cls._format_admin_rights(value, language)
         if admin_rights_text:
             return admin_rights_text
 
-        banned_rights_text = cls._format_banned_rights(value)
+        banned_rights_text = cls._format_banned_rights(value, language)
         if banned_rights_text:
             return banned_rights_text
 
@@ -991,11 +1165,11 @@ class TelethonProfileService:
         if restriction_reason_text:
             return restriction_reason_text
 
-        chat_reactions_text = cls._format_chat_reactions(value)
+        chat_reactions_text = cls._format_chat_reactions(value, language)
         if chat_reactions_text:
             return chat_reactions_text
 
-        emoji_status_text = cls._format_emoji_status(value)
+        emoji_status_text = cls._format_emoji_status(value, language)
         if emoji_status_text:
             return emoji_status_text
 
@@ -1023,18 +1197,24 @@ class TelethonProfileService:
         lines: list[str],
         entity: Any,
         mappings: tuple[tuple[str, str], ...],
+        language: str,
     ) -> None:
-        flags = [label for attr, label in mappings if getattr(entity, attr, False)]
+        flags = [
+            cls._profile_token(label, language)
+            for attr, label in mappings
+            if getattr(entity, attr, False)
+        ]
         if flags:
-            cls._append_field(lines, "标记", "、".join(flags))
+            cls._append_field(lines, "flags", cls._profile_join(flags, language), language)
 
-    @staticmethod
-    def _append_field(lines: list[str], label: str, value: Any) -> None:
-        value = TelethonProfileService._stringify_value(value)
+    @classmethod
+    def _append_field(cls, lines: list[str], label_key: str, value: Any, language: str) -> None:
+        value = TelethonProfileService._stringify_value(value, language)
         if value is None:
             return
         if isinstance(value, str) and not value.strip():
             return
+        label = cls._profile_label(label_key, language)
         if isinstance(value, str) and TelethonProfileService._looks_like_html_value(value):
             lines.append(f"<b>{html.escape(label)}:</b> {value}")
             return
@@ -1046,40 +1226,46 @@ class TelethonProfileService:
         lines: list[str],
         source: Any,
         mappings: tuple[tuple[str, str], ...],
+        language: str,
     ) -> None:
         if source is None:
             return
-        for label, attr in mappings:
+        for label_key, attr in mappings:
             value = getattr(source, attr, None)
             if value is False:
                 continue
             if attr == "stats_dc":
-                value = cls._format_data_center(value)
-            cls._append_field(lines, label, value)
+                value = cls._format_data_center(value, language)
+            cls._append_field(lines, label_key, value, language)
 
     @classmethod
-    def _append_phone_field(cls, lines: list[str], entity: Any) -> None:
+    def _append_phone_field(cls, lines: list[str], entity: Any, language: str) -> None:
         phone = getattr(entity, "phone", None)
         if not phone:
             return
-        cls._append_field(lines, "手机号", "🙈 已隐藏")
+        cls._append_field(lines, "phone", cls._profile_token("🙈 已隐藏", language), language)
 
     @staticmethod
     def _looks_like_html_value(value: str) -> bool:
         return bool(re.search(r"</?(?:a|b|i|u|s|code|pre|blockquote)\b", value, re.IGNORECASE))
 
     @staticmethod
-    def _format_data_center(value: Any) -> str | None:
-        return format_data_center(value)
+    def _format_data_center(value: Any, language: str = "zh-CN") -> str | None:
+        return format_data_center_label(value, language)
 
     @classmethod
-    def _infer_data_center(cls, entity: Any, full: Any | None = None) -> str | None:
+    def _infer_data_center(
+        cls,
+        entity: Any,
+        full: Any | None = None,
+        language: str = "zh-CN",
+    ) -> str | None:
         stats_dc = getattr(full, "stats_dc", None)
         if stats_dc not in (None, False):
-            return cls._format_data_center(stats_dc)
+            return cls._format_data_center(stats_dc, language)
 
         photo = getattr(entity, "photo", None)
         dc_id = getattr(photo, "dc_id", None)
         if dc_id not in (None, False):
-            return cls._format_data_center(dc_id)
+            return cls._format_data_center(dc_id, language)
         return None

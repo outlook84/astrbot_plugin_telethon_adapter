@@ -92,7 +92,7 @@ class LazyRecord(Record):
                 return original_path
             if not convert_audio_to_wav:
                 logger.warning(
-                    "[Telethon] 音频转换能力不可用，回退原文件: path=%s",
+                    "[Telethon] Audio conversion is unavailable, falling back to the original file: path=%s",
                     original_path,
                 )
                 return original_path
@@ -106,7 +106,7 @@ class LazyRecord(Record):
                 object.__setattr__(self, "_converted_path", converted)
                 return converted
             except Exception as e:
-                logger.warning(f"[Telethon] 音频转 WAV 失败，回退原文件: {e}")
+                logger.warning(f"[Telethon] Failed to convert audio to WAV, falling back to the original file: {e}")
                 return original_path
 
 

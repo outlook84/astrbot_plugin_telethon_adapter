@@ -49,6 +49,7 @@ def _load_status_service_module():
 
 status_service_module = _load_status_service_module()
 TelethonStatusService = status_service_module.TelethonStatusService
+t = sys.modules["telethon_adapter.i18n"].t
 
 
 class _FakeMemoryInfo:
@@ -79,6 +80,10 @@ class _FakeClient:
 class _FakeEvent:
     client = _FakeClient()
     platform_meta = _FakePlatformMeta()
+
+
+class _FakeEnglishEvent(_FakeEvent):
+    telethon_language = "en-US"
 
 
 class _FakeCpuTimes:
@@ -138,6 +143,10 @@ class TelethonStatusServiceTest(unittest.IsolatedAsyncioTestCase):
             TelethonStatusService.human_time_duration(90061),
             "1天1小时1分钟",
         )
+        self.assertEqual(TelethonStatusService.human_time_duration(3661, "en-US"), "1h 1m")
+
+    def test_unknown_label_in_chinese(self):
+        self.assertEqual(t("zh-CN", "status.unknown"), "未知")
 
     async def test_build_status_text(self):
         fake_psutil = _FakePsutil()
@@ -215,3 +224,62 @@ class TelethonStatusServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("运行时间: <code>1小时1分钟</code>", text)
         self.assertNotIn("主机名", text)
         self.assertNotIn("Kernel 版本", text)
+
+    async def test_build_status_text_in_english(self):
+        fake_psutil = _FakePsutil()
+        original_psutil = status_service_module.psutil
+        original_datetime = status_service_module.datetime
+        original_sleep = status_service_module.asyncio.sleep
+        original_platform = status_service_module.platform
+        original_time = status_service_module.time
+
+        class _FakeDateTime:
+            @staticmethod
+            def fromtimestamp(value, tz=None):
+                return original_datetime.fromtimestamp(value, tz=tz)
+
+            @staticmethod
+            def now(tz=None):
+                return original_datetime.fromtimestamp(1_700_003_661, tz=tz)
+
+        async def _fake_sleep(_seconds):
+            return None
+
+        class _FakePlatform:
+            @staticmethod
+            def system():
+                return "Linux"
+
+            @staticmethod
+            def python_version():
+                return "3.14.3"
+
+        class _FakeTime:
+            _calls = 0
+
+            @classmethod
+            def monotonic(cls):
+                cls._calls += 1
+                if cls._calls == 1:
+                    return 100.0
+                return 100.1
+
+        status_service_module.psutil = fake_psutil
+        status_service_module.datetime = _FakeDateTime
+        status_service_module.asyncio.sleep = _fake_sleep
+        status_service_module.platform = _FakePlatform
+        status_service_module.time = _FakeTime
+        try:
+            service = TelethonStatusService()
+            text = await service.build_status_text(_FakeEnglishEvent())
+        finally:
+            status_service_module.psutil = original_psutil
+            status_service_module.datetime = original_datetime
+            status_service_module.asyncio.sleep = original_sleep
+            status_service_module.platform = original_platform
+            status_service_module.time = original_time
+
+        self.assertIn("<b>Runtime Status</b>", text)
+        self.assertIn("Host Platform: <code>linux</code>", text)
+        self.assertIn("Data Center: <code>🇳🇱 Amsterdam, Netherlands (DC2)</code>", text)
+        self.assertIn("Uptime: <code>1h 1m</code>", text)

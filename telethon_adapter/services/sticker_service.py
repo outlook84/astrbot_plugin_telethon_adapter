@@ -11,6 +11,7 @@ from PIL.Image import Resampling
 from telethon import functions, types, utils
 from telethon.errors.rpcerrorlist import StickersetInvalidError
 
+from ..i18n import t
 
 DEFAULT_STICKER_EMOJI = "\U0001F5BC"
 MAX_STICKER_PACK_NAME_LENGTH = 64
@@ -40,33 +41,30 @@ class TelethonStickerService:
         reply_message = await self._get_reply_message(event)
         if reply_message is None:
             if normalized_arg2:
-                raise ValueError("`tg sticker` 最多接受两个参数：贴纸包名和可选 emoji。")
+                raise ValueError(t(event, "sticker.too_many_args"))
             if normalized_arg1:
-                pack_name = self._validate_pack_name(normalized_arg1)
+                pack_name = self._validate_pack_name(event, normalized_arg1)
                 storage_key = self._build_storage_key(event)
                 await self._kv_store.put_kv_data(storage_key, pack_name)
                 return StickerCommandPayload(
-                    text=f"已设置默认贴纸包名: <code>{pack_name}</code>",
+                    text=t(event, "sticker.default_pack_set", pack_name=pack_name),
                 )
             return await self._build_usage_payload(event)
 
         if normalized_arg2:
-            pack_name = self._validate_pack_name(normalized_arg1)
+            pack_name = self._validate_pack_name(event, normalized_arg1)
             emoji = normalized_arg2
         else:
             stored_pack_name = await self._load_pack_name(event)
             if normalized_arg1 and self._looks_like_pack_name(normalized_arg1):
-                pack_name = self._validate_pack_name(normalized_arg1)
+                pack_name = self._validate_pack_name(event, normalized_arg1)
                 emoji = ""
             else:
                 pack_name = stored_pack_name
                 emoji = normalized_arg1
 
             if not pack_name:
-                raise ValueError(
-                    "你还没有设置默认贴纸包名。先执行 `tg sticker <pack_name>`，"
-                    "然后回复图片或贴纸再执行 `tg sticker`。"
-                )
+                raise ValueError(t(event, "sticker.default_pack_missing"))
 
         return await self._add_reply_media_to_pack(
             event,
@@ -79,22 +77,11 @@ class TelethonStickerService:
         pack_name = await self._load_pack_name(event)
         if pack_name:
             return StickerCommandPayload(
-                text=(
-                    f"当前默认贴纸包: <code>{pack_name}</code><br/>"
-                    f"查看链接: <a href=\"https://t.me/addstickers/{pack_name}\">"
-                    f"t.me/addstickers/{pack_name}</a><br/>"
-                    "用法:<br/>"
-                    "1. <code>tg sticker pack_name</code> 设置默认贴纸包名<br/>"
-                    "2. 回复图片/静态贴纸/TGS/WEBM 视频贴纸后执行 <code>tg sticker</code><br/>"
-                    "3. 回复媒体后执行 <code>tg sticker 😎</code> 自定义 emoji"
-                ),
+                text=t(event, "sticker.usage_with_default", pack_name=pack_name),
                 link_preview=False,
             )
         return StickerCommandPayload(
-            text=(
-                "先设置默认贴纸包名: <code>tg sticker pack_name</code><br/>"
-                "然后回复图片或贴纸执行 <code>tg sticker</code>。"
-            ),
+            text=t(event, "sticker.usage_without_default"),
             link_preview=False,
         )
 
@@ -108,14 +95,14 @@ class TelethonStickerService:
     ) -> StickerCommandPayload:
         client = getattr(event, "client", None)
         if client is None:
-            raise ValueError("当前事件没有可用的 Telethon client。")
+            raise ValueError(t(event, "sticker.client_missing"))
 
         detected_emoji = await self._resolve_sticker_emoji(reply_message)
         final_emoji = str(emoji or detected_emoji or DEFAULT_STICKER_EMOJI).strip() or DEFAULT_STICKER_EMOJI
 
         sticker_file, mime_type = await self._prepare_sticker_file(reply_message)
         if sticker_file is None or not mime_type:
-            raise ValueError("回复消息必须是图片、静态贴纸、TGS 动态贴纸，或 WEBM 视频贴纸。")
+            raise ValueError(t(event, "sticker.unsupported_reply_media"))
 
         try:
             if mime_type == "application/x-tgsticker":
@@ -138,7 +125,7 @@ class TelethonStickerService:
             )
             uploaded_document = getattr(upload_result, "document", None)
             if uploaded_document is None:
-                raise TypeError("上传结果不是有效的 Document")
+                raise TypeError("Upload result is not a valid Document")
 
             sticker_item = types.InputStickerSetItem(
                 document=utils.get_input_document(uploaded_document),
@@ -152,14 +139,21 @@ class TelethonStickerService:
         except ValueError:
             raise
         except Exception as exc:
-            logger.exception("[Telethon] 处理 tg sticker 失败: pack_name=%s", pack_name)
-            raise ValueError(f"添加贴纸失败: {exc}") from exc
+            logger.exception("[Telethon] Sticker command processing failed: pack_name=%s", pack_name)
+            raise ValueError(t(event, "sticker.add_failed", error=exc)) from exc
 
-        action_text = "已创建新的贴纸包并加入贴纸" if created else "已加入贴纸"
+        action_text = (
+            t(event, "sticker.created_and_added")
+            if created
+            else t(event, "sticker.added")
+        )
         return StickerCommandPayload(
-            text=(
-                f"{action_text}: <code>{final_emoji}</code><br/>"
-                f"贴纸包: <a href=\"https://t.me/addstickers/{pack_name}\">{pack_name}</a>"
+            text=t(
+                event,
+                "sticker.result",
+                action=action_text,
+                emoji=final_emoji,
+                pack_name=pack_name,
             ),
             link_preview=False,
         )
@@ -275,7 +269,7 @@ class TelethonStickerService:
         try:
             return await get_reply_message()
         except Exception:
-            logger.debug("[Telethon] 获取 tg sticker 回复消息失败", exc_info=True)
+            logger.debug("[Telethon] Failed to fetch replied message for tg sticker", exc_info=True)
             return None
 
     async def _resolve_account_key(self, event: Any) -> str:
@@ -309,16 +303,20 @@ class TelethonStickerService:
         return bool(STICKER_PACK_NAME_PATTERN.fullmatch(str(value or "").strip()))
 
     @staticmethod
-    def _validate_pack_name(pack_name: str) -> str:
-        normalized = str(pack_name or "").strip()
+    def _validate_pack_name(event_or_pack_name: Any, pack_name: str | None = None) -> str:
+        event = event_or_pack_name if pack_name is not None else None
+        raw_pack_name = event_or_pack_name if pack_name is None else pack_name
+        normalized = str(raw_pack_name or "").strip()
         if not normalized:
-            raise ValueError("贴纸包名不能为空。")
+            raise ValueError(t(event, "sticker.pack_name_empty"))
         if len(normalized) > MAX_STICKER_PACK_NAME_LENGTH:
-            raise ValueError("贴纸包名不能超过 64 个字符。")
+            raise ValueError(
+                t(event, "sticker.pack_name_too_long", limit=MAX_STICKER_PACK_NAME_LENGTH)
+            )
         if not STICKER_PACK_NAME_PATTERN.fullmatch(normalized):
-            raise ValueError("贴纸包名必须以字母开头，且只能包含字母、数字和下划线。")
+            raise ValueError(t(event, "sticker.pack_name_invalid_chars"))
         if "__" in normalized:
-            raise ValueError("贴纸包名不能包含连续下划线。")
+            raise ValueError(t(event, "sticker.pack_name_double_underscore"))
         return normalized
 
     @staticmethod

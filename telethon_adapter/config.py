@@ -2,108 +2,68 @@ from __future__ import annotations
 
 from typing import Any
 
+from .i18n import CONFIG_FIELD_TEXTS, DEFAULT_LANGUAGE, normalize_language, t
 
-TELETHON_CONFIG_METADATA = {
-    "api_id": {
-        "description": "Telegram API ID",
-        "type": "int",
-        "hint": "在 my.telegram.org 申请得到的 API ID。",
-    },
-    "api_hash": {
-        "description": "Telegram API Hash",
+FIELD_SPECS = {
+    "id": {"type": "string"},
+    "api_id": {"type": "int"},
+    "api_hash": {"type": "string"},
+    "session_string": {"type": "text"},
+    "language": {
         "type": "string",
-        "hint": "在 my.telegram.org 申请得到的 API Hash。",
+        "options": ["zh-CN", "en-US"],
     },
-    "session_string": {
-        "description": "Telethon StringSession",
-        "type": "text",
-        "hint": "先通过 scripts/generate_session.py 交互登录，再把输出的 StringSession 填到这里。",
-    },
-    "id": {
-        "description": "适配器 ID",
-        "type": "string",
-        "hint": "平台实例唯一标识，用于区分多个 Telegram 适配器实例。",
-    },
-    "trigger_prefix": {
-        "description": "触发前缀",
-        "type": "string",
-        "hint": "仅处理以此前缀开头的消息。留空表示处理所有消息。",
-    },
-    "download_incoming_media": {
-        "description": "下载入站媒体",
-        "type": "bool",
-        "hint": "关闭后，不下载收到的图片、文件、音视频附件。",
-    },
-    "incoming_media_ttl_seconds": {
-        "description": "入站媒体缓存 TTL",
-        "type": "float",
-        "hint": "媒体下载到本地后保留的秒数。设为 0 或负数表示仅在适配器退出时清理。",
-    },
-    "log_processed_messages_only": {
-        "description": "仅记录已处理消息",
-        "type": "bool",
-        "hint": "开启后，只记录真正提交给 AstrBot 处理的消息。",
-    },
-    "debug_logging": {
-        "description": "调试日志",
-        "type": "bool",
-        "hint": "开启后，输出更详细的 Telethon 事件转换与命令调试日志。",
-    },
-    "telethon_media_group_timeout": {
-        "description": "媒体组聚合延迟",
-        "type": "float",
-        "hint": "媒体组防抖等待时间，单位秒。",
-    },
-    "telethon_media_group_max_wait": {
-        "description": "媒体组最大等待时间",
-        "type": "float",
-        "hint": "媒体组聚合的最长等待时间，单位秒。",
-    },
+    "trigger_prefix": {"type": "string"},
+    "download_incoming_media": {"type": "bool"},
+    "incoming_media_ttl_seconds": {"type": "float"},
+    "log_processed_messages_only": {"type": "bool"},
+    "debug_logging": {"type": "bool"},
+    "telethon_media_group_timeout": {"type": "float"},
+    "telethon_media_group_max_wait": {"type": "float"},
     "proxy_type": {
-        "description": "代理类型",
         "type": "string",
-        "hint": "支持 socks5、socks4、http、mtproto。",
         "options": ["", "socks5", "socks4", "http", "mtproto"],
-        "labels": ["直连", "SOCKS5", "SOCKS4", "HTTP", "MTProto"],
     },
-    "proxy_host": {
-        "description": "代理主机",
-        "type": "string",
-        "hint": "代理服务器地址，例如 127.0.0.1。",
-    },
-    "proxy_port": {
-        "description": "代理端口",
-        "type": "int",
-        "hint": "代理端口，例如 1080。",
-    },
-    "proxy_username": {
-        "description": "代理用户名",
-        "type": "string",
-        "hint": "SOCKS/HTTP 代理可选用户名。",
-    },
-    "proxy_password": {
-        "description": "代理密码",
-        "type": "string",
-        "hint": "SOCKS/HTTP 代理可选密码。",
-    },
+    "proxy_host": {"type": "string"},
+    "proxy_port": {"type": "int"},
+    "proxy_username": {"type": "string"},
+    "proxy_password": {"type": "string"},
     "proxy_rdns": {
-        "description": "代理远程 DNS",
         "type": "bool",
-        "hint": "SOCKS/HTTP 代理是否通过代理端进行域名解析，默认开启。",
         "invisible": True,
     },
-    "proxy_secret": {
-        "description": "MTProto Secret",
-        "type": "string",
-        "hint": "仅 MTProto 代理需要填写 secret。",
-    },
+    "proxy_secret": {"type": "string"},
 }
 
+def _build_config_metadata(default_language: str = DEFAULT_LANGUAGE) -> dict[str, dict[str, Any]]:
+    texts = CONFIG_FIELD_TEXTS[default_language]
+    metadata: dict[str, dict[str, Any]] = {}
+    for field_name, field_spec in FIELD_SPECS.items():
+        field_metadata = dict(field_spec)
+        field_metadata.update(texts.get(field_name, {}))
+        metadata[field_name] = field_metadata
+    return metadata
+
+
+def _build_i18n_resources() -> dict[str, dict[str, dict[str, Any]]]:
+    return {
+        language: {
+            field_name: dict(field_text)
+            for field_name, field_text in field_texts.items()
+        }
+        for language, field_texts in CONFIG_FIELD_TEXTS.items()
+    }
+
+
+TELETHON_CONFIG_METADATA = _build_config_metadata()
+TELETHON_I18N_RESOURCES = _build_i18n_resources()
+
 DEFAULT_CONFIG_TEMPLATE = {
+    "id": "telethon_userbot",
     "api_id": 123456,
     "api_hash": "your_api_hash",
     "session_string": "",
-    "id": "telethon_userbot",
+    "language": DEFAULT_LANGUAGE,
     "trigger_prefix": "-astr",
     "download_incoming_media": True,
     "incoming_media_ttl_seconds": 600.0,
@@ -194,6 +154,7 @@ def apply_config(adapter: Any) -> None:
     adapter.api_id = parse_int(adapter.config.get("api_id"), 0)
     adapter.api_hash = parse_str(adapter.config.get("api_hash"), "")
     adapter.session_string = parse_str(adapter.config.get("session_string"), "")
+    adapter.language = parse_str(adapter.config.get("language"), DEFAULT_LANGUAGE)
     adapter.trigger_prefix = parse_str(adapter.config.get("trigger_prefix"), "")
     adapter.download_incoming_media = parse_bool(
         adapter.config.get("download_incoming_media"), True
@@ -225,30 +186,59 @@ def apply_config(adapter: Any) -> None:
     adapter.proxy_secret = parse_str(adapter.config.get("proxy_secret"), "")
 
 
-def config_error(field_name: str, current_value: Any, suggestion: str) -> ValueError:
+def _config_language(config: Any) -> str:
+    if isinstance(config, dict):
+        return normalize_language(config.get("language"))
+    return DEFAULT_LANGUAGE
+
+
+def config_error(
+    field_name: str,
+    current_value: Any,
+    suggestion: str,
+    *,
+    language: str = DEFAULT_LANGUAGE,
+) -> ValueError:
     return ValueError(
-        f"[Telethon] 配置字段 {field_name} 的当前值为 {current_value!r}。{suggestion}"
+        t(
+            language,
+            "config.error",
+            field_name=field_name,
+            current_value=current_value,
+            suggestion=suggestion,
+        )
     )
 
 
 def validate_config(adapter: Any) -> None:
+    language = _config_language(getattr(adapter, "config", None))
     if adapter.api_id <= 0:
         raise config_error(
             "api_id",
             adapter.config.get("api_id"),
-            "请填写从 my.telegram.org 获取的正整数 API ID。",
+            t(language, "config.api_id.invalid"),
+            language=language,
         )
     if not adapter.api_hash:
         raise config_error(
             "api_hash",
             adapter.config.get("api_hash"),
-            "请填写从 my.telegram.org 获取的 API Hash。",
+            t(language, "config.api_hash.invalid"),
+            language=language,
         )
     if not adapter.session_string:
         raise config_error(
             "session_string",
             adapter.config.get("session_string"),
-            "请先运行 scripts/generate_session.py 生成有效的 StringSession。",
+            t(language, "config.session_string.invalid"),
+            language=language,
+        )
+    if adapter.language not in {"zh-CN", "en-US"}:
+        raise config_error(
+            "language",
+            adapter.config.get("language"),
+            t(language, "config.language.invalid"),
+            language=language,
         )
 
     allowed_proxy_types = {"", "socks5", "socks4", "http", "mtproto"}
@@ -256,37 +246,43 @@ def validate_config(adapter: Any) -> None:
         raise config_error(
             "proxy_type",
             adapter.config.get("proxy_type"),
-            "请从 '', socks5, socks4, http, mtproto 中选择一个值。",
+            t(language, "config.proxy_type.invalid"),
+            language=language,
         )
     if adapter.proxy_type:
         if not adapter.proxy_host:
             raise config_error(
                 "proxy_host",
                 adapter.config.get("proxy_host"),
-                "启用代理时请填写代理主机地址。",
+                t(language, "config.proxy_host.required"),
+                language=language,
             )
         if adapter.proxy_port <= 0:
             raise config_error(
                 "proxy_port",
                 adapter.config.get("proxy_port"),
-                "启用代理时请填写大于 0 的代理端口。",
+                t(language, "config.proxy_port.required"),
+                language=language,
             )
         if adapter.proxy_type == "mtproto" and not adapter.proxy_secret:
             raise config_error(
                 "proxy_secret",
                 adapter.config.get("proxy_secret"),
-                "使用 MTProto 代理时请填写 proxy_secret。",
+                t(language, "config.proxy_secret.required"),
+                language=language,
             )
 
     if adapter.media_group_timeout < 0:
         raise config_error(
             "telethon_media_group_timeout",
             adapter.config.get("telethon_media_group_timeout"),
-            "请填写大于等于 0 的秒数。",
+            t(language, "config.media_group_timeout.invalid"),
+            language=language,
         )
     if adapter.media_group_max_wait <= 0:
         raise config_error(
             "telethon_media_group_max_wait",
             adapter.config.get("telethon_media_group_max_wait"),
-            "请填写大于 0 的秒数。",
+            t(language, "config.media_group_max_wait.invalid"),
+            language=language,
         )

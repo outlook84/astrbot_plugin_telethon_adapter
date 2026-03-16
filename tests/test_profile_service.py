@@ -360,6 +360,39 @@ class TelethonProfileServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<b>讨论组 ID:</b> 2048", rendered)
         self.assertIn("<b>标记:</b> 已认证", rendered)
 
+    def test_format_user_profile_text_in_english(self):
+        status_cls = types.new_class("UserStatusOnline")
+        entity = User(
+            id=12345,
+            first_name="Alice",
+            last_name="Smith",
+            username="alice",
+            photo=types.SimpleNamespace(dc_id=2),
+            phone="123456789",
+            premium=True,
+            verified=True,
+            bot=False,
+            contact=True,
+            usernames=[types.SimpleNamespace(username="alice_archive", active=True)],
+            status=status_cls(),
+        )
+        full = types.SimpleNamespace(
+            about="Test bio",
+            common_chats_count=8,
+        )
+
+        rendered = TelethonProfileService._format_profile_text(
+            ResolvedProfile(entity=entity, full=full, source="explicit parameter @alice"),
+            language="en-US",
+        )
+
+        self.assertIn("<b>Type:</b> User", rendered)
+        self.assertIn("<b>Display Name:</b> Alice Smith", rendered)
+        self.assertIn("<b>Data Center:</b> 🇳🇱 Amsterdam, Netherlands (DC2)", rendered)
+        self.assertIn("<b>Phone:</b> 🙈 Hidden", rendered)
+        self.assertIn("<b>Status:</b> Online", rendered)
+        self.assertIn("<b>Flags:</b> Contact, Verified, Premium", rendered)
+
     def test_format_private_group_link_uses_hidden_invite(self):
         entity = Channel(
             id=779,
@@ -513,6 +546,25 @@ class TelethonProfileServiceTest(unittest.IsolatedAsyncioTestCase):
             "🙈 已隐藏 (永久 ; 使用次数=3/10)",
         )
 
+    def test_stringify_invite_object_in_english(self):
+        invite = types.SimpleNamespace(
+            link="https://t.me/+Ls0oRAPWobowMTc1",
+            permanent=True,
+            revoked=False,
+            request_needed=False,
+            usage=3,
+            usage_limit=10,
+            expire_date=None,
+            title=None,
+        )
+
+        rendered = TelethonProfileService._stringify_value(invite, "en-US")
+
+        self.assertEqual(
+            rendered,
+            "🙈 Hidden (permanent ; usage=3/10)",
+        )
+
     def test_stringify_admin_rights_object(self):
         rights = types.new_class("ChatAdminRights")
         rights = rights()
@@ -573,6 +625,16 @@ class TelethonProfileServiceTest(unittest.IsolatedAsyncioTestCase):
         rendered = TelethonProfileService._user_status(entity)
 
         self.assertIn("在线（状态有效至", rendered)
+
+    def test_user_status_online_uses_effective_until_wording_in_english(self):
+        status_cls = types.new_class("UserStatusOnline")
+        status = status_cls()
+        status.expires = datetime(2026, 3, 14, 6, 7, 0, tzinfo=timezone.utc)
+        entity = User(id=1, status=status)
+
+        rendered = TelethonProfileService._user_status(entity, "en-US")
+
+        self.assertIn("Online (valid until", rendered)
 
     async def test_download_profile_photo_falls_back_to_full_photo(self):
         service = TelethonProfileService()

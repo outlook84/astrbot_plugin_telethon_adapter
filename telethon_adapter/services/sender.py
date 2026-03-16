@@ -23,7 +23,7 @@ class TelethonSender:
         client = getattr(event, "client", None)
         peer = getattr(event, "peer", None)
         if client is None or peer is None:
-            raise ValueError("当前事件没有可用的 Telethon 发送上下文。")
+            raise ValueError("No Telethon send context is available for the current event.")
         reply_to = self._resolve_reply_to(event) if follow_reply else None
 
         if file_path:

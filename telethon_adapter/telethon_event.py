@@ -76,7 +76,7 @@ class TelethonEvent(AstrMessageEvent):
         except Exception as e:
             context = self._message_log_context()
             logger.warning(
-                "[Telethon] 发送 chat action 失败: chat_id=%s msg_id=%s sender_id=%s error=%s",
+                "[Telethon] Failed to send chat action: chat_id=%s msg_id=%s sender_id=%s error=%s",
                 context["chat_id"],
                 context["msg_id"],
                 context["sender_id"],
@@ -98,7 +98,7 @@ class TelethonEvent(AstrMessageEvent):
             except Exception as e:
                 context = self._message_log_context()
                 logger.debug(
-                    "[Telethon] action 上下文不可用，回退单次 chat action: "
+                    "[Telethon] Chat action context unavailable, falling back to a single chat action: "
                     "chat_id=%s msg_id=%s sender_id=%s action=%s error=%s",
                     context["chat_id"],
                     context["msg_id"],
@@ -143,7 +143,7 @@ class TelethonEvent(AstrMessageEvent):
         except Exception:
             context = self._message_log_context(reply_to)
             logger.exception(
-                "[Telethon] 发送媒体失败: chat_id=%s msg_id=%s sender_id=%s reply_to=%s action=%s path=%s",
+                "[Telethon] Failed to send media: chat_id=%s msg_id=%s sender_id=%s reply_to=%s action=%s path=%s",
                 context["chat_id"],
                 context["msg_id"],
                 context["sender_id"],
@@ -165,7 +165,7 @@ class TelethonEvent(AstrMessageEvent):
                 try:
                     reply_to = int(item.id)
                 except (TypeError, ValueError):
-                    logger.warning(f"[Telethon] 无法解析 Reply ID: {item.id}")
+                    logger.warning(f"[Telethon] Failed to parse reply ID: {item.id}")
                 continue
 
             if isinstance(item, At):
@@ -233,7 +233,7 @@ class TelethonEvent(AstrMessageEvent):
                 )
                 continue
 
-            logger.warning(f"[Telethon] 暂不支持消息段类型: {item.type}")
+            logger.warning(f"[Telethon] Unsupported message segment type: {item.type}")
 
         await self._flush_text(text_parts, reply_to)
         await super().send(message)
@@ -483,7 +483,7 @@ class TelethonEvent(AstrMessageEvent):
         except Exception as e:
             context = self._message_log_context(reply_to)
             logger.warning(
-                "[Telethon] Markdown转HTML发送失败，使用普通文本: "
+                "[Telethon] Failed to convert Markdown to HTML, falling back to plain text: "
                 "chat_id=%s msg_id=%s sender_id=%s reply_to=%s error=%s",
                 context["chat_id"],
                 context["msg_id"],
@@ -507,7 +507,7 @@ class TelethonEvent(AstrMessageEvent):
             except Exception as e:
                 context = self._message_log_context()
                 logger.warning(
-                    "[Telethon] 原生 reaction 失败，尝试 MTProto 兜底: "
+                    "[Telethon] Native reaction failed, trying MTProto fallback: "
                     "chat_id=%s msg_id=%s sender_id=%s emoji=%s error=%s",
                     context["chat_id"],
                     context["msg_id"],
@@ -529,7 +529,7 @@ class TelethonEvent(AstrMessageEvent):
         except Exception as e:
             context = self._message_log_context()
             logger.warning(
-                "[Telethon] MTProto reaction 失败: chat_id=%s msg_id=%s sender_id=%s emoji=%s error=%s",
+                "[Telethon] MTProto reaction failed: chat_id=%s msg_id=%s sender_id=%s emoji=%s error=%s",
                 context["chat_id"],
                 context["msg_id"],
                 context["sender_id"],
@@ -537,4 +537,4 @@ class TelethonEvent(AstrMessageEvent):
                 e,
             )
 
-        logger.warning("[Telethon] 当前消息对象不支持原生 reaction，已跳过预回应表情")
+        logger.warning("[Telethon] Current message object does not support native reactions; skipped pre-reaction emoji")

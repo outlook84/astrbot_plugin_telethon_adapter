@@ -32,6 +32,7 @@ from telethon.sessions import StringSession
 from .config import (
     DEFAULT_CONFIG_TEMPLATE,
     TELETHON_CONFIG_METADATA,
+    TELETHON_I18N_RESOURCES,
     apply_config,
     config_error,
     validate_config,
@@ -49,6 +50,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
     support_streaming_message=False,
     default_config_tmpl=DEFAULT_CONFIG_TEMPLATE,
     config_metadata=TELETHON_CONFIG_METADATA,
+    i18n_resources=TELETHON_I18N_RESOURCES,
 )
 class TelethonPlatformAdapter(Platform):
     def __init__(
@@ -81,7 +83,7 @@ class TelethonPlatformAdapter(Platform):
             # AstrBot core uses platform_meta.name as the canonical adapter type
             # for platform filters and compatibility checks.
             name="telethon_userbot",
-            description="Telethon Userbot 适配器",
+            description="Telethon Userbot Adapter",
             id=adapter_id,
             support_streaming_message=False,
         )
@@ -102,7 +104,7 @@ class TelethonPlatformAdapter(Platform):
             await self.client.connect()
             if not await self.client.is_user_authorized():
                 raise RuntimeError(
-                    "[Telethon] 当前 session_string 未授权。请重新生成有效 StringSession。"
+                    "[Telethon] The current session_string is unauthorized. Regenerate a valid StringSession."
                 )
 
             me = await self.client.get_me()
@@ -110,7 +112,7 @@ class TelethonPlatformAdapter(Platform):
             self.self_username = str(getattr(me, "username", "") or "").strip().lower()
 
             logger.info(
-                "[Telethon] Userbot 已启动: %s username=%s "
+                "[Telethon] Userbot started: %s username=%s "
                 "download_incoming_media=%s incoming_media_ttl_seconds=%s "
                 "trigger_prefix=%r log_processed_messages_only=%s proxy_type=%s "
                 "proxy_host=%s proxy_port=%s raw_config=%s",
@@ -153,7 +155,7 @@ class TelethonPlatformAdapter(Platform):
             self._main_task = asyncio.create_task(self.client.run_until_disconnected())
             await self._main_task
         except asyncio.CancelledError:
-            logger.info("[Telethon] 适配器任务已取消")
+            logger.info("[Telethon] Adapter task cancelled")
         finally:
             self._running = False
             await self.terminate()
@@ -178,7 +180,7 @@ class TelethonPlatformAdapter(Platform):
             try:
                 await self.client.disconnect()
             except Exception:
-                logger.exception("[Telethon] 关闭连接失败")
+                logger.exception("[Telethon] Failed to close connection")
 
         if self._main_task and not self._main_task.done():
             self._main_task.cancel()
@@ -191,7 +193,7 @@ class TelethonPlatformAdapter(Platform):
         self, session: MessageSesion, message_chain: MessageChain
     ) -> None:
         if not self.client:
-            raise RuntimeError("[Telethon] 客户端未初始化")
+            raise RuntimeError("[Telethon] Client is not initialized")
 
         inner_message = AstrBotMessage()
         inner_message.session_id = session.session_id
@@ -203,6 +205,7 @@ class TelethonPlatformAdapter(Platform):
             session_id=session.session_id,
             client=self.client,
         )
+        message_event.telethon_language = self.language
         await message_event.send(message_chain)
         await super().send_by_session(session, message_chain)
 
@@ -214,12 +217,12 @@ class TelethonPlatformAdapter(Platform):
             return {}
 
         if not self.proxy_host or not self.proxy_port:
-            raise ValueError("[Telethon] 已配置代理，但缺少 proxy_host 或 proxy_port")
+            raise ValueError("[Telethon] Proxy is configured, but proxy_host or proxy_port is missing")
 
         if self.proxy_type in {"socks5", "socks4", "http"}:
             if ProxyType is None:
                 raise RuntimeError(
-                    "[Telethon] 已配置 SOCKS/HTTP 代理，但缺少 python-socks 依赖"
+                    "[Telethon] SOCKS/HTTP proxy is configured, but python-socks is not installed"
                 )
             proxy_type_map = {
                 "socks5": ProxyType.SOCKS5,
@@ -240,14 +243,14 @@ class TelethonPlatformAdapter(Platform):
         if self.proxy_type == "mtproto":
             if not self.proxy_secret:
                 raise ValueError(
-                    "[Telethon] MTProto 代理需要配置 proxy_secret"
+                    "[Telethon] MTProto proxy requires proxy_secret"
                 )
             mtproto_connection = getattr(
                 connection, "ConnectionTcpMTProxyRandomizedIntermediate", None
             ) or getattr(connection, "ConnectionTcpMTProxyIntermediate", None)
             if mtproto_connection is None:
                 raise RuntimeError(
-                    "[Telethon] 当前 Telethon 版本未提供 MTProto 代理连接类"
+                    "[Telethon] The current Telethon version does not provide an MTProto proxy connection class"
                 )
             return {
                 "connection": mtproto_connection,
@@ -259,7 +262,7 @@ class TelethonPlatformAdapter(Platform):
             }
 
         raise ValueError(
-            "[Telethon] 不支持的 proxy_type。可选值: socks5, socks4, http, mtproto"
+            "[Telethon] Unsupported proxy_type. Valid values: socks5, socks4, http, mtproto"
         )
 
     def _config_error(self, field_name: str, current_value: Any, suggestion: str) -> ValueError:
@@ -276,7 +279,7 @@ class TelethonPlatformAdapter(Platform):
         if not self._running:
             return
         if not getattr(event, "message", None):
-            self._log_unprocessed("[Telethon] 忽略消息: empty event.message")
+            self._log_unprocessed("[Telethon] Ignoring message: empty event.message")
             return
 
         event_key = (
@@ -293,12 +296,12 @@ class TelethonPlatformAdapter(Platform):
                 self._recent_event_keys.pop(key, None)
             self._recent_event_keys_cleanup_at = now + 30
         if event_key in self._recent_event_keys:
-            self._log_unprocessed("[Telethon] 忽略消息: duplicate event %s", event_key)
+            self._log_unprocessed("[Telethon] Ignoring message: duplicate event %s", event_key)
             return
         self._recent_event_keys[event_key] = now
 
         self._log_unprocessed(
-            "[Telethon] 收到消息事件: chat_id=%s sender_id=%s out=%s private=%s text=%r",
+            "[Telethon] Received message event: chat_id=%s sender_id=%s out=%s private=%s text=%r",
             getattr(event, "chat_id", None),
             getattr(event, "sender_id", None),
             getattr(event.message, "out", None) if getattr(event, "message", None) else None,
@@ -330,7 +333,7 @@ class TelethonPlatformAdapter(Platform):
         raw_text = str(getattr(event.message, "raw_text", "") or "")
         if self.trigger_prefix and not raw_text.startswith(self.trigger_prefix):
             self._log_unprocessed(
-                "[Telethon] 忽略消息: missing trigger_prefix %r text=%r",
+                "[Telethon] Ignoring message: missing trigger_prefix %r text=%r",
                 self.trigger_prefix,
                 raw_text,
             )
@@ -340,7 +343,7 @@ class TelethonPlatformAdapter(Platform):
             abm = await self._convert_message(event, include_reply=True)
         except Exception:
             logger.exception(
-                "[Telethon] 转换消息失败: chat_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                "[Telethon] Failed to convert message: chat_id=%s msg_id=%s sender_id=%s reply_to=%s",
                 getattr(event, "chat_id", None),
                 getattr(event.message, "id", None),
                 getattr(event, "sender_id", None),
@@ -349,7 +352,7 @@ class TelethonPlatformAdapter(Platform):
             return
 
         logger.info(
-            "[Telethon] 提交 AstrBot 事件: session_id=%s type=%s sender=%s text=%r",
+            "[Telethon] Committing AstrBot event: session_id=%s type=%s sender=%s text=%r",
             getattr(abm, "session_id", None),
             getattr(abm, "type", None),
             getattr(getattr(abm, "sender", None), "user_id", None),
@@ -406,6 +409,7 @@ class TelethonPlatformAdapter(Platform):
             client=self.client,
         )
         message_event.telethon_debug_logging = self.debug_logging
+        message_event.telethon_language = self.language
         self.commit_event(message_event)
 
     async def _handle_grouped_message(
@@ -467,7 +471,7 @@ class TelethonPlatformAdapter(Platform):
                     break
             if trigger_event is None:
                 self._log_unprocessed(
-                    "[Telethon] 忽略媒体组: missing trigger_prefix %r grouped_id=%s",
+                    "[Telethon] Ignoring media group: missing trigger_prefix %r grouped_id=%s",
                     self.trigger_prefix,
                     grouped_id,
                 )
@@ -479,7 +483,7 @@ class TelethonPlatformAdapter(Platform):
             merged = await self._convert_message(trigger_event, include_reply=True)
         except Exception:
             logger.exception(
-                "[Telethon] 媒体组首条消息转换失败: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                "[Telethon] Failed to convert media group primary message: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
                 getattr(trigger_event, "chat_id", None),
                 grouped_id,
                 getattr(trigger_event.message, "id", None),
@@ -499,7 +503,7 @@ class TelethonPlatformAdapter(Platform):
                 extra = await self._convert_message(extra_event, include_reply=False)
             except Exception:
                 logger.exception(
-                    "[Telethon] 媒体组子消息转换失败: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
+                    "[Telethon] Failed to convert media group child message: chat_id=%s grouped_id=%s msg_id=%s sender_id=%s reply_to=%s",
                     getattr(extra_event, "chat_id", None),
                     grouped_id,
                     getattr(extra_event.message, "id", None),
@@ -531,7 +535,7 @@ class TelethonPlatformAdapter(Platform):
                 base_dir = str(get_astrbot_temp_path())
             except Exception:
                 logger.warning(
-                    "[Telethon] 获取 AstrBot 临时目录失败，回退系统临时目录: adapter_id=%s",
+                    "[Telethon] Failed to get AstrBot temp directory, falling back to the system temp directory: adapter_id=%s",
                     self.config.get("id") or "telethon_userbot",
                     exc_info=True,
                 )
@@ -568,7 +572,7 @@ class TelethonPlatformAdapter(Platform):
                 if os.path.exists(path):
                     os.remove(path)
             except Exception:
-                logger.exception("[Telethon] 清理临时媒体文件失败: %s", path)
+                logger.exception("[Telethon] Failed to clean up temporary media file: %s", path)
                 continue
             self._downloaded_temp_files.pop(path, None)
         if force or not self._downloaded_temp_files:

@@ -20,7 +20,7 @@ try:
 except ImportError:
     from plugin_info import PLUGIN_VERSION
 
-from .data_center import format_data_center
+from ..i18n import format_data_center_label, get_event_language, t
 
 try:
     from telethon import __version__ as TELETHON_VERSION
@@ -53,21 +53,22 @@ class TelethonStatusService:
 
     async def build_status_text(self, event: Any | None = None) -> str:
         snapshot = await self.get_status(event)
+        language = get_event_language(event)
         lines = [
-            "<b>运行状态</b>",
-            f"主机平台: <code>{html.escape(snapshot.platform_name)}</code>",
-            f"Python 版本: <code>{html.escape(snapshot.python_version)}</code>",
-            f"AstrBot 版本: <code>{html.escape(snapshot.astrbot_version)}</code>",
-            f"Telethon 版本: <code>{html.escape(snapshot.telethon_version)}</code>",
-            f"数据中心: <code>{html.escape(snapshot.data_center)}</code>",
-            f"插件版本: <code>{html.escape(snapshot.plugin_version)}</code>",
-            f"适配器 ID: <code>{html.escape(snapshot.adapter_id)}</code>",
-            f"系统 CPU: <code>{html.escape(snapshot.system_cpu_percent)}</code>",
-            f"系统内存: <code>{html.escape(snapshot.system_ram_percent)}</code>",
-            f"系统 SWAP: <code>{html.escape(snapshot.swap_percent)}</code>",
-            f"进程 CPU: <code>{html.escape(snapshot.process_cpu_percent)}</code>",
-            f"进程内存: <code>{html.escape(snapshot.process_ram_percent)}</code>",
-            f"运行时间: <code>{html.escape(snapshot.run_time)}</code>",
+            f"<b>{html.escape(t(language, 'status.title'))}</b>",
+            f"{html.escape(t(language, 'status.platform'))}: <code>{html.escape(snapshot.platform_name)}</code>",
+            f"{html.escape(t(language, 'status.python_version'))}: <code>{html.escape(snapshot.python_version)}</code>",
+            f"{html.escape(t(language, 'status.astrbot_version'))}: <code>{html.escape(snapshot.astrbot_version)}</code>",
+            f"{html.escape(t(language, 'status.telethon_version'))}: <code>{html.escape(snapshot.telethon_version)}</code>",
+            f"{html.escape(t(language, 'status.data_center'))}: <code>{html.escape(snapshot.data_center)}</code>",
+            f"{html.escape(t(language, 'status.plugin_version'))}: <code>{html.escape(snapshot.plugin_version)}</code>",
+            f"{html.escape(t(language, 'status.adapter_id'))}: <code>{html.escape(snapshot.adapter_id)}</code>",
+            f"{html.escape(t(language, 'status.system_cpu'))}: <code>{html.escape(snapshot.system_cpu_percent)}</code>",
+            f"{html.escape(t(language, 'status.system_ram'))}: <code>{html.escape(snapshot.system_ram_percent)}</code>",
+            f"{html.escape(t(language, 'status.swap'))}: <code>{html.escape(snapshot.swap_percent)}</code>",
+            f"{html.escape(t(language, 'status.process_cpu'))}: <code>{html.escape(snapshot.process_cpu_percent)}</code>",
+            f"{html.escape(t(language, 'status.process_ram'))}: <code>{html.escape(snapshot.process_ram_percent)}</code>",
+            f"{html.escape(t(language, 'status.run_time'))}: <code>{html.escape(snapshot.run_time)}</code>",
         ]
         return "\n".join(lines)
 
@@ -108,7 +109,7 @@ class TelethonStatusService:
             plugin_version=PLUGIN_VERSION,
             adapter_id=adapter_id,
             data_center=data_center,
-            run_time=self.human_time_duration(uptime_seconds),
+            run_time=self.human_time_duration(uptime_seconds, get_event_language(event)),
             system_cpu_percent=f"{cpu_percent:.1f}%",
             system_ram_percent=f"{ram_stat.percent:.1f}%",
             swap_percent=f"{swap_stat.percent:.1f}%",
@@ -117,17 +118,17 @@ class TelethonStatusService:
         )
 
     @staticmethod
-    def human_time_duration(seconds: int) -> str:
+    def human_time_duration(seconds: int, language: str = "zh-CN") -> str:
         remaining = max(0, int(seconds))
         days, remaining = divmod(remaining, 24 * 60 * 60)
         hours, remaining = divmod(remaining, 60 * 60)
         minutes, _seconds = divmod(remaining, 60)
 
         if days > 0:
-            return f"{days}天{hours}小时{minutes}分钟"
+            return t(language, "status.duration.days", days=days, hours=hours, minutes=minutes)
         if hours > 0:
-            return f"{hours}小时{minutes}分钟"
-        return f"{minutes}分钟"
+            return t(language, "status.duration.hours", hours=hours, minutes=minutes)
+        return t(language, "status.duration.minutes", minutes=minutes)
 
     @staticmethod
     def _get_process_cpu_time(process: psutil.Process) -> float:
@@ -151,7 +152,12 @@ class TelethonStatusService:
     def _get_adapter_status(self, event: Any | None = None) -> tuple[str, str]:
         adapter_id = self._get_event_adapter_id(event)
         dc_id = self._get_event_dc_id(event)
-        data_center = format_data_center(dc_id) if dc_id is not None else "unknown"
+        language = get_event_language(event)
+        data_center = (
+            format_data_center_label(dc_id, language)
+            if dc_id is not None
+            else t(language, "status.unknown")
+        )
         return adapter_id, data_center
 
     @staticmethod
@@ -160,7 +166,7 @@ class TelethonStatusService:
         adapter_id = str(getattr(platform_meta, "id", "") or "").strip()
         if adapter_id:
             return adapter_id
-        return "unknown"
+        return t(event, "status.unknown")
 
     @staticmethod
     def _get_event_dc_id(event: Any | None) -> int | None:

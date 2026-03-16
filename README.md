@@ -4,15 +4,19 @@
 
 > 重要：建议始终配合 AstrBot 的会话白名单使用本插件。如果未配置白名单，存在与其它 Bot 之间互相回复、形成消息循环的风险。
 
+English README: [README_EN.md](README_EN.md)
+
 ## 功能
 
 - 使用用户账户接收 Telegram 消息并回发文本与图片消息
+- 基于用户账号直连 Telegram，不受 Bot API 50MB 上传限制约束
 - 长文本自动按 Telegram 上限分片发送
 - 支持引用回复（`Reply` 消息段）
 - 提供 `tg profile` 命令，用于获取用户/群组/频道资料
 - 提供 `tg status` 命令，用于查看当前 AstrBot 状态
 - 提供 `tg sticker` 命令，用于把回复的图片/贴纸加入自己的贴纸包
 - 提供 `tg prune` / `tg selfprune` / `tg youprune` 命令，用于批量删除消息
+- 支持 `zh-CN` / `en-US` 多语言运行时回复与 WebUI 配置文案
 
 ## 注意事项
 
@@ -70,6 +74,7 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `api_id`: Telegram API ID（整数）
 - `api_hash`: Telegram API Hash
 - `session_string`: 上一步得到的 StringSession
+- `language`: 适配器实例语言，支持 `zh-CN` 与 `en-US`，默认 `zh-CN`
 - `trigger_prefix`: 触发前缀，默认是 `-astr`。此为消息入口过滤前缀，用于减少无关消息日志和后续 AstrBot 管线调用；在本插件场景下可替代唤醒词使用。
 - `download_incoming_media`: 是否下载收到的媒体文件（建议 `true`）
 - `telethon_media_group_timeout`: 媒体组聚合防抖延迟（秒，默认 `1.2`）
@@ -80,6 +85,10 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `proxy_username`: SOCKS/HTTP 代理用户名，可选
 - `proxy_password`: SOCKS/HTTP 代理密码，可选
 - `proxy_secret`: 仅 `mtproto` 代理需要填写
+
+`language` 会影响：
+
+- 运行时命令交互文案，例如 `tg profile` / `tg status` / `tg sticker` / `tg prune`
 
 ## 扩展命令
 

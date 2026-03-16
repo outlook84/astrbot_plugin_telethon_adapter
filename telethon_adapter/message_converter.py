@@ -128,7 +128,7 @@ class TelethonMessageConverter:
                 reply_msg = await msg.get_reply_message()
             except Exception as e:
                 logger.warning(
-                    "[Telethon] 拉取引用消息失败，退化为空引用: chat_id=%s message_id=%s reply_to=%s error=%s",
+                    "[Telethon] Failed to fetch replied message, falling back to an empty reply: chat_id=%s message_id=%s reply_to=%s error=%s",
                     chat_id,
                     getattr(msg, "id", None),
                     reply_id,
@@ -150,7 +150,7 @@ class TelethonMessageConverter:
                         )
                     except Exception:
                         logger.exception(
-                            "[Telethon] 引用消息结构转换失败: chat_id=%s message_id=%s reply_to=%s",
+                            "[Telethon] Failed to convert replied message structure: chat_id=%s message_id=%s reply_to=%s",
                             chat_id,
                             getattr(msg, "id", None),
                             reply_id,

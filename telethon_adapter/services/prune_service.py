@@ -8,6 +8,8 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.message_components import At
 
+from ..i18n import get_event_language, t
+
 try:
     from telethon import errors as telethon_errors
 except ImportError:
@@ -67,6 +69,7 @@ class PruneResult:
     target_user_id: int | None = None
     command_deleted: bool = False
     partial: bool = False
+    language: str = "zh-CN"
 
 
 class TelethonPruneService:
@@ -79,29 +82,26 @@ class TelethonPruneService:
         target_user: Any | None = None,
     ) -> PruneResult:
         if count is not None and count <= 0:
-            raise ValueError("删除数量必须是正整数。用法: `tg prune 20`。")
+            raise ValueError(t(event, "prune.count_positive"))
         if count is not None and count > PRUNE_MAX_COUNT:
-            raise ValueError(
-                f"单次最多只允许删除 {PRUNE_MAX_COUNT} 条消息，"
-                "这是为了降低误删和风控风险。",
-            )
+            raise ValueError(t(event, "prune.max_count", limit=PRUNE_MAX_COUNT))
 
         client = getattr(event, "client", None)
         raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
         if client is None or raw_message is None:
-            raise ValueError("当前事件没有可用的 Telethon 上下文。")
+            raise ValueError(t(event, "prune.context_missing"))
 
         chat = await self._get_chat(raw_message)
         peer = await self._resolve_peer(event, raw_message, chat)
         current_message_id = self._coerce_message_id(getattr(raw_message, "id", None))
         if current_message_id is None:
-            raise ValueError("当前命令消息缺少有效的消息 ID，无法执行批量删除。")
+            raise ValueError(t(event, "prune.invalid_message_id"))
 
         reply_anchor_id = self._extract_reply_anchor_id(raw_message)
         if count is None and reply_anchor_id is None:
-            raise ValueError("省略数量时必须回复一条消息。用法: 回复目标后执行 `tg prune`。")
+            raise ValueError(t(event, "prune.reply_required"))
 
-        await self._ensure_delete_permission(chat)
+        await self._ensure_delete_permission(chat, get_event_language(event))
         command_message_id = self._collect_current_command_message(
             raw_message=raw_message,
             current_message_id=current_message_id,
@@ -125,9 +125,9 @@ class TelethonPruneService:
         )
         if not all_candidate_ids:
             raise ValueError(
-                "没有找到可删除的消息。"
+                t(event, "prune.no_messages")
                 if reply_anchor_id is None
-                else "回复锚点和当前命令之间没有可删除的普通消息。",
+                else t(event, "prune.no_messages_between"),
             )
 
         deleted_count = 0
@@ -141,6 +141,7 @@ class TelethonPruneService:
                     client=client,
                     peer=peer,
                     message_ids=batch,
+                    language=get_event_language(event),
                 )
             except Exception:
                 partial = True
@@ -178,36 +179,53 @@ class TelethonPruneService:
             target_user_id=self._coerce_message_id(getattr(target_user, "id", None)),
             command_deleted=command_deleted,
             partial=partial,
+            language=get_event_language(event),
         )
 
     def format_result_text(self, result: PruneResult) -> str:
-        title = "批量删除完成" if not result.partial else "批量删除部分完成"
-        requested_count = "自动" if result.requested_count is None else str(result.requested_count)
+        title = (
+            t(result.language, "prune.title.partial")
+            if result.partial
+            else t(result.language, "prune.title.done")
+        )
+        requested_count = (
+            t(result.language, "prune.auto")
+            if result.requested_count is None
+            else str(result.requested_count)
+        )
         lines = [
             f"<b>{html.escape(title)}</b>",
-            f"请求数量: <code>{requested_count}</code>",
-            f"扫描消息: <code>{result.scanned_count}</code>",
-            f"匹配数量: <code>{result.matched_count}</code>",
-            f"成功删除: <code>{result.deleted_count}</code>",
-            f"过滤数量: <code>{result.filtered_out_count}</code>",
-            f"跳过数量: <code>{result.skipped_count}</code>",
-            f"失败数量: <code>{result.failed_count}</code>",
+            f"{html.escape(t(result.language, 'prune.requested_count'))}: <code>{requested_count}</code>",
+            f"{html.escape(t(result.language, 'prune.scanned_count'))}: <code>{result.scanned_count}</code>",
+            f"{html.escape(t(result.language, 'prune.matched_count'))}: <code>{result.matched_count}</code>",
+            f"{html.escape(t(result.language, 'prune.deleted_count'))}: <code>{result.deleted_count}</code>",
+            f"{html.escape(t(result.language, 'prune.filtered_out_count'))}: <code>{result.filtered_out_count}</code>",
+            f"{html.escape(t(result.language, 'prune.skipped_count'))}: <code>{result.skipped_count}</code>",
+            f"{html.escape(t(result.language, 'prune.failed_count'))}: <code>{result.failed_count}</code>",
         ]
         if result.used_reply_anchor and result.reply_anchor_id is not None:
-            lines.append(f"回复锚点: <code>{result.reply_anchor_id}</code>")
+            lines.append(
+                f"{html.escape(t(result.language, 'prune.reply_anchor'))}: <code>{result.reply_anchor_id}</code>"
+            )
         if result.only_self:
-            lines.append("删除范围: <code>仅自己的消息</code>")
+            lines.append(
+                f"{html.escape(t(result.language, 'prune.range_self'))}: <code>{html.escape(t(result.language, 'prune.range_self_value'))}</code>"
+            )
         elif result.target_user_id is not None:
-            lines.append(f"删除目标: <code>{result.target_user_id}</code>")
+            lines.append(
+                f"{html.escape(t(result.language, 'prune.target_user'))}: <code>{result.target_user_id}</code>"
+            )
         if result.scan_limit is not None:
-            lines.append(f"扫描上限: <code>{result.scan_limit}</code>")
+            lines.append(
+                f"{html.escape(t(result.language, 'prune.scan_limit'))}: <code>{result.scan_limit}</code>"
+            )
         if result.hit_scan_limit:
-            lines.append("提示: 已达到扫描上限，只处理当前窗口内命中的消息。")
+            lines.append(t(result.language, "prune.hit_scan_limit"))
         if result.command_deleted:
-            lines.append("提示: 已附带删除当前命令消息。")
+            lines.append(t(result.language, "prune.command_deleted"))
         return "\n".join(lines)
 
-    async def _ensure_delete_permission(self, chat: Any) -> None:
+    async def _ensure_delete_permission(self, chat: Any, language: str) -> None:
         if chat is None:
             return
 
@@ -224,7 +242,7 @@ class TelethonPruneService:
             return
 
         if bool(getattr(chat, "megagroup", False)) or bool(getattr(chat, "broadcast", False)):
-            raise ValueError("当前账号看起来没有该会话的删除权限。")
+            raise ValueError(t(language, "prune.no_permission"))
 
     async def _resolve_peer(self, event: Any, raw_message: Any, chat: Any | None) -> Any:
         peer = getattr(event, "peer", None)
@@ -238,7 +256,7 @@ class TelethonPruneService:
         if chat is not None:
             return chat
 
-        raise ValueError("无法解析当前会话，无法执行批量删除。")
+        raise ValueError(t(get_event_language(event), "prune.resolve_peer_failed"))
 
     async def _get_chat(self, raw_message: Any) -> Any | None:
         get_chat = getattr(raw_message, "get_chat", None)
@@ -247,7 +265,7 @@ class TelethonPruneService:
         try:
             return await get_chat()
         except Exception:
-            logger.debug("[Telethon] 拉取当前会话 chat 失败", exc_info=True)
+            logger.debug("[Telethon] Failed to fetch current chat", exc_info=True)
             return None
 
     async def _collect_candidate_ids(
@@ -337,6 +355,7 @@ class TelethonPruneService:
         client: Any,
         peer: Any,
         message_ids: list[int],
+        language: str,
     ) -> tuple[int, int, int, set[int]]:
         try:
             await self._delete_messages(client, peer, message_ids)
@@ -348,26 +367,27 @@ class TelethonPruneService:
                     peer=peer,
                     message_ids=message_ids,
                     exc=exc,
+                    language=language,
                 )
             if self._is_instance(exc, MessageDeleteForbiddenError) or self._is_instance(
                 exc,
                 MessageIdInvalidError,
             ):
-                return await self._delete_individually(client, peer, message_ids)
+                return await self._delete_individually(client, peer, message_ids, language)
             if self._is_instance(exc, ChatAdminRequiredError) or self._is_instance(
                 exc,
                 ForbiddenError,
             ):
-                raise ValueError("没有删除这些消息所需的权限。")
+                raise ValueError(t(language, "prune.permission_required"))
             if self._is_instance(exc, RPCError):
                 logger.warning(
-                    "[Telethon] 批量删除失败: peer=%r ids=%s error=%s",
+                    "[Telethon] Bulk delete RPC failed: peer=%r ids=%s error=%s",
                     peer,
                     message_ids,
                     exc,
                     exc_info=True,
                 )
-                raise ValueError(f"批量删除失败: {exc}")
+                raise ValueError(t(language, "prune.rpc_failed", error=exc))
             raise
 
     async def _handle_flood_wait(
@@ -376,16 +396,14 @@ class TelethonPruneService:
         peer: Any,
         message_ids: list[int],
         exc: BaseException,
+        language: str,
     ) -> tuple[int, int, int, set[int]]:
         wait_seconds = int(getattr(exc, "seconds", 0) or 0)
         if wait_seconds <= 0 or wait_seconds > PRUNE_FLOOD_WAIT_RETRY_SECONDS:
-            raise ValueError(
-                "删除请求触发了 Telegram 风控，请稍后再试。"
-                f"服务器要求等待 {wait_seconds} 秒。"
-            ) from exc
+            raise ValueError(t(language, "prune.flood_wait", seconds=wait_seconds)) from exc
 
         logger.warning(
-            "[Telethon] prune 命中 FloodWait，等待 %s 秒后重试: ids=%s",
+            "[Telethon] Prune hit FloodWait; retrying after %s seconds: ids=%s",
             wait_seconds,
             message_ids,
         )
@@ -398,6 +416,7 @@ class TelethonPruneService:
         client: Any,
         peer: Any,
         message_ids: list[int],
+        language: str,
     ) -> tuple[int, int, int, set[int]]:
         deleted_count = 0
         deleted_message_ids: set[int] = set()
@@ -416,6 +435,7 @@ class TelethonPruneService:
                         peer=peer,
                         message_ids=[message_id],
                         exc=exc,
+                        language=language,
                     )
                     deleted_count += batch_deleted
                     deleted_message_ids.update(batch_deleted_ids)
@@ -428,7 +448,7 @@ class TelethonPruneService:
                 ):
                     skipped_count += 1
                     logger.info(
-                        "[Telethon] 跳过不可删除消息: peer=%r message_id=%s error=%s",
+                        "[Telethon] Skipping undeletable message: peer=%r message_id=%s error=%s",
                         peer,
                         message_id,
                         exc,
@@ -438,11 +458,11 @@ class TelethonPruneService:
                     exc,
                     ForbiddenError,
                 ):
-                    raise ValueError("没有删除这些消息所需的权限。") from exc
+                    raise ValueError(t(language, "prune.permission_required")) from exc
                 if self._is_instance(exc, RPCError):
                     failed_count += 1
                     logger.warning(
-                        "[Telethon] 删除单条消息失败: peer=%r message_id=%s error=%s",
+                        "[Telethon] Failed to delete message: peer=%r message_id=%s error=%s",
                         peer,
                         message_id,
                         exc,
@@ -480,7 +500,7 @@ class TelethonPruneService:
             try:
                 me = await get_me()
             except Exception:
-                logger.debug("[Telethon] 解析当前账号身份失败", exc_info=True)
+                logger.debug("[Telethon] Failed to resolve current account identity", exc_info=True)
             else:
                 return self._coerce_message_id(getattr(me, "id", None))
         return None
@@ -517,13 +537,13 @@ class TelethonPruneService:
         client = getattr(event, "client", None)
         raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
         if client is None:
-            raise ValueError("当前事件没有可用的 Telethon client。")
+            raise ValueError(t(event, "prune.target_client_missing"))
 
         normalized_target = self._normalize_target(target)
         if normalized_target:
             entity = await client.get_entity(normalized_target)
             if not _has_user_identity(entity):
-                raise ValueError("`youprune` 只能指定用户，不能指定群组或频道。")
+                raise ValueError(t(event, "prune.target_user_only"))
             return entity
 
         mention_entity = await self._resolve_mention_entity(
@@ -536,13 +556,10 @@ class TelethonPruneService:
         reply_entity = await self._resolve_reply_entity(raw_message)
         if reply_entity is not None:
             if not _has_user_identity(reply_entity):
-                raise ValueError("回复目标不是用户，无法执行 `youprune`。")
+                raise ValueError(t(event, "prune.reply_target_not_user"))
             return reply_entity
 
-        raise ValueError(
-            "未找到可删除的目标用户。可传 @username / t.me 链接，"
-            "也可以在消息中 @ 对方，或直接回复对方消息后执行 `tg youprune`。"
-        )
+        raise ValueError(t(event, "prune.target_not_found"))
 
     @staticmethod
     def _normalize_target(target: str) -> str | None:
@@ -572,7 +589,7 @@ class TelethonPruneService:
                 lookup = int(qq) if qq.lstrip("-").isdigit() else qq
                 entity = await client.get_entity(lookup)
             except Exception:
-                logger.debug("[Telethon] 解析 prune @ 提及目标失败: qq=%s", qq, exc_info=True)
+                logger.debug("[Telethon] Failed to resolve prune @mention target: qq=%s", qq, exc_info=True)
                 continue
             if _has_user_identity(entity):
                 return entity
@@ -585,7 +602,7 @@ class TelethonPruneService:
         try:
             reply_message = await get_reply_message()
         except Exception:
-            logger.debug("[Telethon] 拉取回复消息失败，跳过 prune reply 目标解析", exc_info=True)
+            logger.debug("[Telethon] Failed to fetch replied message; skipping prune reply target resolution", exc_info=True)
             return None
         if reply_message is None:
             return None
@@ -596,7 +613,7 @@ class TelethonPruneService:
         try:
             return await get_sender()
         except Exception:
-            logger.debug("[Telethon] 拉取 prune reply sender 失败", exc_info=True)
+            logger.debug("[Telethon] Failed to fetch prune reply sender", exc_info=True)
             return None
 
     @staticmethod
