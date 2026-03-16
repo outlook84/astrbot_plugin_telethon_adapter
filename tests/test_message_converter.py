@@ -373,6 +373,31 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(type(result.message[1]).__name__, "Plain")
         self.assertEqual(result.message[1].text, " hello")
 
+    async def test_convert_group_message_with_empty_prefix_preserves_self_mention_text(self):
+        module = _load_message_converter_module()
+        entity_type = sys.modules["telethon.tl.types"].MessageEntityMention
+        entity = entity_type()
+        entity.offset = 0
+        entity.length = 8
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = _FakeAdapter(temp_dir)
+            adapter.trigger_prefix = ""
+            converter = module.TelethonMessageConverter(adapter)
+            event = _FakeEvent(
+                _FakeMessage(1, raw_text="@astrbot hello", entities=[entity]),
+                _FakeSender(123, username="alice"),
+            )
+
+            result = await converter.convert_message(event)
+
+        self.assertEqual(result.message_str, "@astrbot hello")
+        self.assertEqual(len(result.message), 2)
+        self.assertEqual(type(result.message[0]).__name__, "Plain")
+        self.assertEqual(result.message[0].text, "@astrbot")
+        self.assertEqual(type(result.message[1]).__name__, "Plain")
+        self.assertEqual(result.message[1].text, " hello")
+
     def test_parse_text_components_converts_tg_user_link_to_at(self):
         module = _load_message_converter_module()
         entity_type = sys.modules["telethon.tl.types"].MessageEntityTextUrl

@@ -87,16 +87,21 @@ class TelethonMessageConverter:
             user_id=str(getattr(sender, "id", "0")),
             nickname=sender_name,
         )
-        message.message_str = self.strip_self_mentions_from_text(
-            msg.raw_text or "",
-            getattr(msg, "entities", None),
-        )
         message.message = []
         if is_private:
             message.type = MessageType.FRIEND_MESSAGE
         else:
             message.type = MessageType.GROUP_MESSAGE
             message.group_id = chat_id
+
+        preserve_group_mention_wakeup = not is_private and not self.adapter.trigger_prefix
+        if preserve_group_mention_wakeup:
+            message.message_str = msg.raw_text or ""
+        else:
+            message.message_str = self.strip_self_mentions_from_text(
+                msg.raw_text or "",
+                getattr(msg, "entities", None),
+            )
 
         inject_self_at = False
         if (
@@ -172,6 +177,7 @@ class TelethonMessageConverter:
         text_components = self.parse_text_components(
             msg.raw_text or "",
             getattr(msg, "entities", None),
+            preserve_self_mentions=preserve_group_mention_wakeup,
         )
         if strip_trigger_prefix and self.adapter.trigger_prefix:
             text_components = self.strip_prefix_from_components(
@@ -297,6 +303,7 @@ class TelethonMessageConverter:
         self,
         text: str,
         entities: list[Any] | None,
+        preserve_self_mentions: bool = False,
     ) -> list[Any]:
         if not text:
             return []
@@ -324,6 +331,10 @@ class TelethonMessageConverter:
                 components.append(Plain(text=text[cursor:offset]))
 
             entity_text = text[offset:end]
+            if preserve_self_mentions and self.is_self_mention(entity, entity_text):
+                components.append(Plain(text=entity_text))
+                cursor = end
+                continue
             mention = self.entity_to_at(entity, entity_text)
             if mention:
                 components.append(mention)
