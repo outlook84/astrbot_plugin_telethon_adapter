@@ -221,30 +221,6 @@ class TelethonPlatformAdapter(Platform):
     def get_client(self):
         return self.client
 
-    def get_reconnect_status(self) -> dict[str, Any]:
-        next_retry_in_seconds: float | None = None
-        if self._next_reconnect_at_monotonic is not None:
-            next_retry_in_seconds = max(
-                0.0,
-                self._next_reconnect_at_monotonic - time.monotonic(),
-            )
-
-        state = "stopped"
-        if self._retry_sleep_task and not self._retry_sleep_task.done():
-            state = "reconnecting"
-        elif self.client is not None:
-            state = "connected"
-        elif self._running:
-            state = "connecting"
-
-        return {
-            "state": state,
-            "retry_attempt": self._reconnect_attempt,
-            "next_retry_in_seconds": next_retry_in_seconds,
-            "last_disconnect_reason": self._last_disconnect_reason,
-            "last_disconnect_at_unix": self._last_disconnect_at_unix,
-        }
-
     async def _run_client_once(self, client_kwargs: dict[str, Any]) -> None:
         self.client = self._create_client(client_kwargs)
         await self.client.connect()

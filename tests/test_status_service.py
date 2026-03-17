@@ -84,16 +84,6 @@ class _FakeAdapter:
     def meta():
         return types.SimpleNamespace(name="telethon_userbot", id="telethon_userbot")
 
-    @staticmethod
-    def get_reconnect_status():
-        return {
-            "state": "reconnecting",
-            "retry_attempt": 3,
-            "next_retry_in_seconds": 7.2,
-            "last_disconnect_reason": "clean_disconnect",
-            "last_disconnect_at_unix": 1_700_003_600,
-        }
-
 
 class _FakePlatformManager:
     @staticmethod
@@ -249,7 +239,6 @@ class TelethonStatusServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("系统 SWAP: <code>12.5%</code>", text)
         self.assertIn("进程 CPU: <code>100.0%</code>", text)
         self.assertIn("进程内存: <code>25.0%</code>", text)
-        self.assertIn("连接状态: <code>重连退避中</code>", text)
         self.assertIn("运行时间: <code>1小时1分钟</code>", text)
         self.assertNotIn("主机名", text)
         self.assertNotIn("Kernel 版本", text)
@@ -311,5 +300,4 @@ class TelethonStatusServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<b>Runtime Status</b>", text)
         self.assertIn("Host Platform: <code>linux</code>", text)
         self.assertIn("Data Center: <code>🇳🇱 Amsterdam, Netherlands (DC2)</code>", text)
-        self.assertIn("Connection State: <code>reconnecting</code>", text)
         self.assertIn("Uptime: <code>1h 1m</code>", text)
