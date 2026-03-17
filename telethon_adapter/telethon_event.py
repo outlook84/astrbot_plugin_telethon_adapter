@@ -21,7 +21,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
-from telethon import functions, types
+from telethon import functions, types, utils as telethon_utils
 
 
 class TelethonEvent(AstrMessageEvent):
@@ -129,7 +129,7 @@ class TelethonEvent(AstrMessageEvent):
         link_preview: bool,
     ) -> Any:
         telethon_reply_to = self._build_reply_to(reply_to)
-        if self.thread_id is None:
+        if not self._should_use_low_level_text_request():
             payload = {
                 "reply_to": telethon_reply_to,
                 "link_preview": link_preview,
@@ -161,9 +161,10 @@ class TelethonEvent(AstrMessageEvent):
         reply_to: int | None,
         mime_type: str | None = None,
         attributes: list[Any] | None = None,
+        spoiler: bool = False,
     ) -> Any:
         telethon_reply_to = self._build_reply_to(reply_to)
-        if self.thread_id is None:
+        if not self._should_use_low_level_media_request(spoiler=spoiler):
             payload: dict[str, Any] = {
                 "caption": caption,
                 "reply_to": telethon_reply_to,
@@ -188,6 +189,12 @@ class TelethonEvent(AstrMessageEvent):
         if attributes:
             media_kwargs["attributes"] = attributes
         _file_handle, media, _is_image = await file_to_media(path, **media_kwargs)
+        if spoiler:
+            media = await self._finalize_spoiler_media(
+                entity,
+                media,
+                mime_type=mime_type,
+            )
         request = functions.messages.SendMediaRequest(
             peer=entity,
             media=media,
@@ -196,6 +203,45 @@ class TelethonEvent(AstrMessageEvent):
             entities=msg_entities,
         )
         return await self._execute_request(request, entity)
+
+    async def _finalize_spoiler_media(
+        self,
+        entity: Any,
+        media: Any,
+        *,
+        mime_type: str | None,
+    ) -> Any:
+        if hasattr(media, "spoiler"):
+            media.spoiler = True
+
+        if isinstance(media, types.InputMediaUploadedPhoto):
+            result = await self.client(
+                functions.messages.UploadMediaRequest(
+                    peer=entity,
+                    media=media,
+                )
+            )
+            spoiler_media = telethon_utils.get_input_media(result.photo)
+            if hasattr(spoiler_media, "spoiler"):
+                spoiler_media.spoiler = True
+            return spoiler_media
+
+        if isinstance(media, types.InputMediaUploadedDocument):
+            result = await self.client(
+                functions.messages.UploadMediaRequest(
+                    peer=entity,
+                    media=media,
+                )
+            )
+            spoiler_media = telethon_utils.get_input_media(
+                result.document,
+                supports_streaming=bool(mime_type and mime_type.startswith("video/")),
+            )
+            if hasattr(spoiler_media, "spoiler"):
+                spoiler_media.spoiler = True
+            return spoiler_media
+
+        return media
 
     def _message_log_context(self, reply_to: int | None = None) -> dict[str, Any]:
         message_obj = getattr(self, "message_obj", None)
@@ -277,6 +323,7 @@ class TelethonEvent(AstrMessageEvent):
         fallback_action: types.TypeSendMessageAction,
         mime_type: str | None = None,
         attributes: list[Any] | None = None,
+        spoiler: bool = False,
     ) -> int | None:
         effective_reply_to = self._effective_reply_to(reply_to)
         try:
@@ -287,6 +334,7 @@ class TelethonEvent(AstrMessageEvent):
                     reply_to=reply_to,
                     mime_type=mime_type,
                     attributes=attributes,
+                    spoiler=spoiler,
                 )
         except Exception:
             context = self._message_log_context(effective_reply_to)
@@ -302,17 +350,103 @@ class TelethonEvent(AstrMessageEvent):
             )
         return reply_to
 
+    async def _build_album_media(
+        self,
+        entity: Any,
+        path: str,
+        *,
+        spoiler: bool = False,
+        supports_streaming: bool = False,
+    ) -> Any:
+        file_to_media = getattr(self.client, "_file_to_media", None)
+        if not callable(file_to_media):
+            raise RuntimeError("Telethon client does not expose _file_to_media")
+
+        media_kwargs: dict[str, Any] = {}
+        if supports_streaming:
+            media_kwargs["supports_streaming"] = True
+            media_kwargs["nosound_video"] = True
+
+        _file_handle, media, _is_image = await file_to_media(path, **media_kwargs)
+        if spoiler:
+            return await self._finalize_spoiler_media(
+                entity,
+                media,
+                mime_type="video/mp4" if supports_streaming else None,
+            )
+
+        if isinstance(media, (types.InputMediaUploadedPhoto, types.InputMediaPhotoExternal)):
+            result = await self.client(
+                functions.messages.UploadMediaRequest(
+                    peer=entity,
+                    media=media,
+                )
+            )
+            return telethon_utils.get_input_media(result.photo)
+
+        if isinstance(
+            media,
+            (types.InputMediaUploadedDocument, types.InputMediaDocumentExternal),
+        ):
+            result = await self.client(
+                functions.messages.UploadMediaRequest(
+                    peer=entity,
+                    media=media,
+                )
+            )
+            return telethon_utils.get_input_media(
+                result.document,
+                supports_streaming=supports_streaming,
+            )
+
+        return media
+
+    async def _send_local_media_group_request(
+        self,
+        media_items: list[tuple[str, bool, bool]],
+        *,
+        caption: str | None,
+        reply_to: int | None,
+    ) -> None:
+        entity = await self._resolve_input_peer()
+        parsed_caption, msg_entities = await self._parse_formatting_entities(
+            caption or "",
+            None,
+        )
+        single_media: list[Any] = []
+
+        for index, (path, spoiler, is_video) in enumerate(media_items):
+            media = await self._build_album_media(
+                entity,
+                path,
+                spoiler=spoiler,
+                supports_streaming=is_video,
+            )
+            single_media.append(
+                types.InputSingleMedia(
+                    media=media,
+                    message=parsed_caption if index == 0 else "",
+                    entities=msg_entities if index == 0 else None,
+                )
+            )
+
+        request = functions.messages.SendMultiMediaRequest(
+            peer=entity,
+            multi_media=single_media,
+            reply_to=self._build_reply_to(reply_to),
+        )
+        await self.client(request)
+
     async def _try_send_local_media_group(self, message: MessageChain) -> bool:
         meta = getattr(message, self.META_ATTR, None)
         if not isinstance(meta, dict) or meta.get("intent") != self.MEDIA_GROUP_INTENT:
             return False
-        if self.thread_id is not None:
-            return False
 
         reply_to: int | None = None
         caption_parts: list[str] = []
-        media_paths: list[str] = []
+        media_items: list[tuple[str, bool, bool]] = []
         media_kind: str | None = None
+        has_spoiler = False
 
         for item in message.chain:
             if isinstance(item, Reply):
@@ -331,23 +465,27 @@ class TelethonEvent(AstrMessageEvent):
                 file_path = await item.convert_to_file_path()
                 if self._is_gif_path(file_path):
                     return False
+                item_spoiler = self._component_has_spoiler(item)
+                has_spoiler = has_spoiler or item_spoiler
                 if media_kind is None:
                     media_kind = "image"
                 elif media_kind != "image":
                     return False
-                media_paths.append(file_path)
+                media_items.append((file_path, item_spoiler, False))
                 continue
             if isinstance(item, Video):
                 file_path = await item.convert_to_file_path()
+                item_spoiler = self._component_has_spoiler(item)
+                has_spoiler = has_spoiler or item_spoiler
                 if media_kind is None:
                     media_kind = "video"
                 elif media_kind != "video":
                     return False
-                media_paths.append(file_path)
+                media_items.append((file_path, item_spoiler, True))
                 continue
             return False
 
-        if len(media_paths) < 2:
+        if len(media_items) < 2:
             return False
 
         caption = "".join(caption_parts).strip() or None
@@ -360,12 +498,21 @@ class TelethonEvent(AstrMessageEvent):
 
         try:
             async with self._chat_action_scope(action_name, fallback_action):
-                await self.client.send_file(
-                    self.peer,
-                    file=media_paths,
-                    caption=caption,
-                    reply_to=self._build_reply_to(reply_to),
-                )
+                if not self._should_use_low_level_media_group_request(
+                    has_spoiler=has_spoiler
+                ):
+                    await self.client.send_file(
+                        self.peer,
+                        file=[path for path, _spoiler, _is_video in media_items],
+                        caption=caption,
+                        reply_to=self._build_reply_to(reply_to),
+                    )
+                else:
+                    await self._send_local_media_group_request(
+                        media_items,
+                        caption=caption,
+                        reply_to=reply_to,
+                    )
         except Exception:
             context = self._message_log_context(reply_to)
             logger.exception(
@@ -375,10 +522,19 @@ class TelethonEvent(AstrMessageEvent):
                 context["msg_id"],
                 context["sender_id"],
                 context["reply_to"],
-                len(media_paths),
+                len(media_items),
             )
             return False
         return True
+
+    def _should_use_low_level_text_request(self) -> bool:
+        return self.thread_id is not None
+
+    def _should_use_low_level_media_request(self, *, spoiler: bool) -> bool:
+        return self.thread_id is not None or spoiler
+
+    def _should_use_low_level_media_group_request(self, *, has_spoiler: bool) -> bool:
+        return self.thread_id is not None or has_spoiler
 
     async def send_typing(self) -> None:
         await self._send_chat_action(types.SendMessageTypingAction())
@@ -435,6 +591,7 @@ class TelethonEvent(AstrMessageEvent):
                     ),
                     mime_type="image/gif" if is_gif else None,
                     attributes=[types.DocumentAttributeAnimated()] if is_gif else None,
+                    spoiler=self._component_has_spoiler(item),
                 )
                 continue
 
@@ -446,6 +603,7 @@ class TelethonEvent(AstrMessageEvent):
                     reply_to,
                     "video",
                     types.SendMessageUploadVideoAction(progress=0),
+                    spoiler=self._component_has_spoiler(item),
                 )
                 continue
 
@@ -457,6 +615,7 @@ class TelethonEvent(AstrMessageEvent):
                     reply_to,
                     "audio",
                     types.SendMessageUploadAudioAction(progress=0),
+                    spoiler=self._component_has_spoiler(item),
                 )
                 continue
 
@@ -468,6 +627,7 @@ class TelethonEvent(AstrMessageEvent):
                     reply_to,
                     "document",
                     types.SendMessageUploadDocumentAction(progress=0),
+                    spoiler=self._component_has_spoiler(item),
                 )
                 continue
 
@@ -535,6 +695,27 @@ class TelethonEvent(AstrMessageEvent):
             chunks.append(text[:split_point])
             text = text[split_point:].lstrip()
         return chunks
+
+    @classmethod
+    def _component_has_spoiler(cls, item: Any) -> bool:
+        for attr_name in ("spoiler", "has_spoiler", "is_spoiler"):
+            value = getattr(item, attr_name, None)
+            if value is not None:
+                return bool(value)
+
+        meta = getattr(item, cls.META_ATTR, None)
+        if isinstance(meta, dict):
+            for key in ("spoiler", "has_spoiler", "is_spoiler"):
+                if key in meta:
+                    return bool(meta[key])
+
+        extra = getattr(item, "extra", None)
+        if isinstance(extra, dict):
+            for key in ("spoiler", "has_spoiler", "is_spoiler"):
+                if key in extra:
+                    return bool(extra[key])
+
+        return False
 
     def _pack_text_chunks(
         self, text_parts: list[tuple[str, bool]]

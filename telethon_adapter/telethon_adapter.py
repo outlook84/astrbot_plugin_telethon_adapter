@@ -672,7 +672,7 @@ class TelethonPlatformAdapter(Platform):
     def _build_adapter_capability(self) -> dict[str, Any]:
         return {
             "supports_media_group": True,
-            "supports_spoiler": False,
+            "supports_spoiler": True,
             "max_items": 10,
             "supported_types": ["image", "video"],
             "supports_mixed_types": True,

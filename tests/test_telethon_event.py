@@ -99,6 +99,7 @@ def _install_telethon_stubs() -> None:
     functions_module = types.ModuleType("telethon.functions")
     messages_module = types.ModuleType("telethon.functions.messages")
     types_module = types.ModuleType("telethon.types")
+    utils_module = types.ModuleType("telethon.utils")
 
     class SetTypingRequest:
         def __init__(self, peer, action, top_msg_id=None):
@@ -124,6 +125,19 @@ def _install_telethon_stubs() -> None:
             self.entities = entities
             self.kwargs = kwargs
 
+    class SendMultiMediaRequest:
+        def __init__(self, peer, multi_media, reply_to=None, **kwargs):
+            self.peer = peer
+            self.multi_media = multi_media
+            self.reply_to = reply_to
+            self.kwargs = kwargs
+
+    class UploadMediaRequest:
+        def __init__(self, peer, media, **kwargs):
+            self.peer = peer
+            self.media = media
+            self.kwargs = kwargs
+
     class SendMessageTypingAction:
         pass
 
@@ -133,6 +147,32 @@ def _install_telethon_stubs() -> None:
 
     class DocumentAttributeAnimated:
         pass
+
+    class InputMediaUploadedPhoto:
+        def __init__(self, file=None, spoiler=False):
+            self.file = file
+            self.path = file
+            self.spoiler = spoiler
+
+    class InputMediaUploadedDocument:
+        def __init__(self, file=None, mime_type=None, attributes=None, spoiler=False):
+            self.file = file
+            self.path = file
+            self.mime_type = mime_type
+            self.attributes = attributes or []
+            self.spoiler = spoiler
+
+    class InputMediaPhotoExternal(InputMediaUploadedPhoto):
+        pass
+
+    class InputMediaDocumentExternal(InputMediaUploadedDocument):
+        pass
+
+    class InputSingleMedia:
+        def __init__(self, media, message="", entities=None):
+            self.media = media
+            self.message = message
+            self.entities = entities
 
     class InputReplyToMessage:
         def __init__(self, reply_to_msg_id, top_msg_id=None):
@@ -145,22 +185,45 @@ def _install_telethon_stubs() -> None:
     messages_module.SetTypingRequest = SetTypingRequest
     messages_module.SendMessageRequest = SendMessageRequest
     messages_module.SendMediaRequest = SendMediaRequest
+    messages_module.SendMultiMediaRequest = SendMultiMediaRequest
+    messages_module.UploadMediaRequest = UploadMediaRequest
     functions_module.messages = messages_module
     types_module.InputReplyToMessage = InputReplyToMessage
     types_module.DocumentAttributeAnimated = DocumentAttributeAnimated
+    types_module.InputMediaUploadedPhoto = InputMediaUploadedPhoto
+    types_module.InputMediaUploadedDocument = InputMediaUploadedDocument
+    types_module.InputMediaPhotoExternal = InputMediaPhotoExternal
+    types_module.InputMediaDocumentExternal = InputMediaDocumentExternal
+    types_module.InputSingleMedia = InputSingleMedia
     types_module.SendMessageTypingAction = SendMessageTypingAction
     types_module.SendMessageUploadPhotoAction = SendMessageUploadPhotoAction
     types_module.SendMessageUploadVideoAction = SendMessageUploadPhotoAction
     types_module.SendMessageUploadAudioAction = SendMessageUploadPhotoAction
     types_module.SendMessageUploadDocumentAction = SendMessageUploadPhotoAction
     types_module.TypeSendMessageAction = TypeSendMessageAction
+
+    def get_input_media(obj, supports_streaming=False):
+        path = getattr(obj, "path", None)
+        spoiler = bool(getattr(obj, "spoiler", False))
+        if bool(getattr(obj, "is_document", False)) or supports_streaming:
+            return InputMediaUploadedDocument(
+                file=path,
+                mime_type="video/mp4" if supports_streaming else "application/octet-stream",
+                attributes=[],
+                spoiler=spoiler,
+            )
+        return InputMediaUploadedPhoto(file=path, spoiler=spoiler)
+
+    utils_module.get_input_media = get_input_media
     telethon_module.functions = functions_module
     telethon_module.types = types_module
+    telethon_module.utils = utils_module
 
     sys.modules["telethon"] = telethon_module
     sys.modules["telethon.functions"] = functions_module
     sys.modules["telethon.functions.messages"] = messages_module
     sys.modules["telethon.types"] = types_module
+    sys.modules["telethon.utils"] = utils_module
 
 
 def _install_markdown_stubs() -> None:
@@ -380,11 +443,28 @@ class _FakeClient:
         self.sent_files = []
         self.requests = []
         self.file_to_media_calls = []
+        self.upload_media_requests = []
 
     async def __call__(self, request):
         self.requests.append(request)
         if type(request).__name__ == "SetTypingRequest":
             self.typing_actions.append(request)
+        if type(request).__name__ == "UploadMediaRequest":
+            self.upload_media_requests.append(request)
+            media = request.media
+            path = getattr(media, "path", None)
+            spoiler = bool(getattr(media, "spoiler", False))
+            if type(media).__name__ == "InputMediaUploadedDocument":
+                return types.SimpleNamespace(
+                    document=types.SimpleNamespace(
+                        path=path,
+                        spoiler=spoiler,
+                        is_document=True,
+                    )
+                )
+            return types.SimpleNamespace(
+                photo=types.SimpleNamespace(path=path, spoiler=spoiler, is_document=False)
+            )
         return {"request": request}
 
     async def send_message(self, peer, text, **kwargs):
@@ -405,7 +485,19 @@ class _FakeClient:
 
     async def _file_to_media(self, file, **kwargs):
         self.file_to_media_calls.append((file, kwargs))
-        return None, f"media:{file}", file.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))
+        if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+            media = sys.modules["telethon.types"].InputMediaUploadedPhoto(file=file)
+        else:
+            media = sys.modules["telethon.types"].InputMediaUploadedDocument(
+                file=file,
+                mime_type=kwargs.get("mime_type") or "application/octet-stream",
+                attributes=kwargs.get("attributes") or [],
+            )
+        return (
+            None,
+            media,
+            file.lower().endswith((".png", ".jpg", ".jpeg", ".gif")),
+        )
 
     def _get_response_message(self, request, result, entity):
         return {"request": request, "result": result, "entity": entity}
@@ -633,7 +725,7 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
             request for request in client.requests if type(request).__name__ == "SendMediaRequest"
         )
         self.assertEqual(request.peer, "input:123")
-        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.media.path, "/tmp/topic-image.png")
         self.assertEqual(request.message, "")
         self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
         self.assertEqual(request.reply_to.reply_to_msg_id, 456)
@@ -659,10 +751,45 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
             request for request in client.requests if type(request).__name__ == "SendMediaRequest"
         )
         self.assertEqual(request.peer, "input:123")
-        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertEqual(request.media.path, "/tmp/topic-image.png")
+
+    async def test_send_image_with_spoiler_uses_send_media_request(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        image = _make_image_component("/tmp/spoiler-image.png")
+        image.spoiler = True
+
+        await event.send(chain_type([image]))
+
+        self.assertEqual(len(client.sent_files), 0)
+        self.assertEqual(len(client.upload_media_requests), 1)
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(request.media.path, "/tmp/spoiler-image.png")
+        self.assertTrue(request.media.spoiler)
+
+    async def test_send_topic_image_with_spoiler_marks_uploaded_media(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        image = _make_image_component("/tmp/topic-spoiler-image.png")
+        image.spoiler = True
+
+        await event.send(chain_type([image]))
+
+        self.assertEqual(len(client.upload_media_requests), 1)
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(request.media.path, "/tmp/topic-spoiler-image.png")
+        self.assertTrue(request.media.spoiler)
         self.assertEqual(request.message, "")
         self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
-        self.assertEqual(request.reply_to.reply_to_msg_id, 999)
+        self.assertEqual(request.reply_to.reply_to_msg_id, 456)
         self.assertEqual(request.reply_to.top_msg_id, 456)
 
     async def test_send_gif_marks_animation_attributes(self):
@@ -749,12 +876,45 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         await event.send(chain)
 
         self.assertEqual(len(client.sent_files), 0)
-        media_requests = [
+        multi_request = next(
             request
             for request in client.requests
-            if type(request).__name__ == "SendMediaRequest"
-        ]
-        self.assertEqual(len(media_requests), 2)
+            if type(request).__name__ == "SendMultiMediaRequest"
+        )
+        self.assertEqual(multi_request.peer, "input:123")
+        self.assertEqual(len(multi_request.multi_media), 2)
+        self.assertEqual(type(multi_request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(multi_request.reply_to.reply_to_msg_id, 456)
+        self.assertEqual(multi_request.reply_to.top_msg_id, 456)
+
+    async def test_send_explicit_local_media_group_with_spoiler_uses_multi_media_request(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        image_a = _make_image_component("/tmp/a.png")
+        image_b = _make_image_component("/tmp/b.png")
+        image_a.spoiler = True
+        chain = chain_type([plain_type(text="任务完成"), image_a, image_b])
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "image"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 0)
+        multi_request = next(
+            request
+            for request in client.requests
+            if type(request).__name__ == "SendMultiMediaRequest"
+        )
+        self.assertEqual(len(multi_request.multi_media), 2)
+        self.assertEqual(multi_request.multi_media[0].message, "任务完成")
+        self.assertTrue(multi_request.multi_media[0].media.spoiler)
+        self.assertFalse(multi_request.multi_media[1].media.spoiler)
 
 
 @unittest.skipUnless(
@@ -800,7 +960,7 @@ class TelethonEventRealTelethonTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_topic_image_uses_real_input_reply_to_message(self):
         module = _load_telethon_event_module_with_real_telethon()
-        from telethon.tl.types import InputReplyToMessage
+        from telethon.tl.types import InputMediaUploadedPhoto, InputReplyToMessage
 
         client = _FakeClient()
         event = module.TelethonEvent("", object(), object(), "123#456", client)
@@ -813,7 +973,7 @@ class TelethonEventRealTelethonTests(unittest.IsolatedAsyncioTestCase):
         request = next(
             request for request in client.requests if isinstance(request, SendMediaRequest)
         )
-        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertIsInstance(request.media, InputMediaUploadedPhoto)
         self.assertEqual(request.message, "")
         self.assertIsInstance(request.reply_to, InputReplyToMessage)
         self.assertEqual(request.reply_to.reply_to_msg_id, 456)
@@ -821,7 +981,7 @@ class TelethonEventRealTelethonTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_topic_image_with_explicit_reply_uses_real_input_reply_to_message(self):
         module = _load_telethon_event_module_with_real_telethon()
-        from telethon.tl.types import InputReplyToMessage
+        from telethon.tl.types import InputMediaUploadedPhoto, InputReplyToMessage
 
         client = _FakeClient()
         event = module.TelethonEvent("", object(), object(), "123#456", client)
@@ -842,7 +1002,7 @@ class TelethonEventRealTelethonTests(unittest.IsolatedAsyncioTestCase):
         request = next(
             request for request in client.requests if isinstance(request, SendMediaRequest)
         )
-        self.assertEqual(request.media, "media:/tmp/topic-image.png")
+        self.assertIsInstance(request.media, InputMediaUploadedPhoto)
         self.assertEqual(request.message, "")
         self.assertIsInstance(request.reply_to, InputReplyToMessage)
         self.assertEqual(request.reply_to.reply_to_msg_id, 999)

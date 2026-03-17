@@ -437,7 +437,7 @@ class ConfigValidationTests(unittest.TestCase):
 
         capability = adapter._build_adapter_capability()
 
-        self.assertFalse(capability["supports_spoiler"])
+        self.assertTrue(capability["supports_spoiler"])
         self.assertEqual(capability["max_items"], 10)
         self.assertEqual(capability["supported_types"], ["image", "video"])
         self.assertEqual(
