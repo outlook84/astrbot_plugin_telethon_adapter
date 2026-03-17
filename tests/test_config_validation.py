@@ -422,6 +422,47 @@ class ConfigValidationTests(unittest.TestCase):
 
         self.assertTrue(adapter.reply_to_self_triggers_command)
 
+    def test_build_adapter_capability_uses_premium_limit_for_userbot(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+            },
+            {},
+            asyncio.Queue(),
+        )
+        adapter._is_premium_user = True
+
+        capability = adapter._build_adapter_capability()
+
+        self.assertFalse(capability["supports_spoiler"])
+        self.assertEqual(capability["max_items"], 10)
+        self.assertEqual(capability["supported_types"], ["image", "video"])
+        self.assertEqual(
+            capability["upload_constraints"]["max_single_file_bytes"],
+            module.TELEGRAM_MAX_FILE_BYTES_PREMIUM,
+        )
+
+    def test_update_premium_status_tracks_get_me_flag(self):
+        module = _load_adapter_module()
+        adapter = module.TelethonPlatformAdapter(
+            {
+                "api_id": 123,
+                "api_hash": "hash",
+                "session_string": "session",
+            },
+            {},
+            asyncio.Queue(),
+        )
+
+        adapter._update_premium_status(types.SimpleNamespace(premium=True))
+        self.assertTrue(adapter._is_premium_user)
+
+        adapter._update_premium_status(types.SimpleNamespace())
+        self.assertFalse(adapter._is_premium_user)
+
     def test_validate_config_reports_invalid_required_field(self):
         module = _load_adapter_module()
         adapter = module.TelethonPlatformAdapter(

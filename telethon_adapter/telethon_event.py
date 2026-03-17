@@ -25,6 +25,8 @@ from telethon import functions, types
 
 
 class TelethonEvent(AstrMessageEvent):
+    META_ATTR = "_gdl_meta"
+    MEDIA_GROUP_INTENT = "media_group"
     MAX_MESSAGE_LENGTH = 4096
     SPLIT_PATTERNS = {
         "paragraph": re.compile(r"\n\n"),
@@ -300,10 +302,92 @@ class TelethonEvent(AstrMessageEvent):
             )
         return reply_to
 
+    async def _try_send_local_media_group(self, message: MessageChain) -> bool:
+        meta = getattr(message, self.META_ATTR, None)
+        if not isinstance(meta, dict) or meta.get("intent") != self.MEDIA_GROUP_INTENT:
+            return False
+        if self.thread_id is not None:
+            return False
+
+        reply_to: int | None = None
+        caption_parts: list[str] = []
+        media_paths: list[str] = []
+        media_kind: str | None = None
+
+        for item in message.chain:
+            if isinstance(item, Reply):
+                try:
+                    reply_to = int(item.id)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"[Telethon] Failed to parse media-group reply ID: {item.id}"
+                    )
+                    return False
+                continue
+            if isinstance(item, Plain):
+                caption_parts.append(item.text)
+                continue
+            if isinstance(item, Image):
+                file_path = await item.convert_to_file_path()
+                if self._is_gif_path(file_path):
+                    return False
+                if media_kind is None:
+                    media_kind = "image"
+                elif media_kind != "image":
+                    return False
+                media_paths.append(file_path)
+                continue
+            if isinstance(item, Video):
+                file_path = await item.convert_to_file_path()
+                if media_kind is None:
+                    media_kind = "video"
+                elif media_kind != "video":
+                    return False
+                media_paths.append(file_path)
+                continue
+            return False
+
+        if len(media_paths) < 2:
+            return False
+
+        caption = "".join(caption_parts).strip() or None
+        action_name = "photo" if media_kind == "image" else "video"
+        fallback_action: types.TypeSendMessageAction
+        if media_kind == "image":
+            fallback_action = types.SendMessageUploadPhotoAction(progress=0)
+        else:
+            fallback_action = types.SendMessageUploadVideoAction(progress=0)
+
+        try:
+            async with self._chat_action_scope(action_name, fallback_action):
+                await self.client.send_file(
+                    self.peer,
+                    file=media_paths,
+                    caption=caption,
+                    reply_to=self._build_reply_to(reply_to),
+                )
+        except Exception:
+            context = self._message_log_context(reply_to)
+            logger.exception(
+                "[Telethon] Failed to send local media group: chat_id=%s thread_id=%s msg_id=%s sender_id=%s reply_to=%s count=%s",
+                context["chat_id"],
+                context["thread_id"],
+                context["msg_id"],
+                context["sender_id"],
+                context["reply_to"],
+                len(media_paths),
+            )
+            return False
+        return True
+
     async def send_typing(self) -> None:
         await self._send_chat_action(types.SendMessageTypingAction())
 
     async def send(self, message: MessageChain):
+        if await self._try_send_local_media_group(message):
+            await super().send(message)
+            return
+
         reply_to: int | None = None
         text_parts: list[tuple[str, bool]] = []
 

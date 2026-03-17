@@ -697,6 +697,65 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(media_kwargs["attributes"]), 1)
         self.assertEqual(type(media_kwargs["attributes"][0]).__name__, "DocumentAttributeAnimated")
 
+    async def test_send_explicit_local_media_group_uses_album_send_file(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        chain = chain_type(
+            [
+                plain_type(text="任务完成"),
+                _make_image_component("/tmp/a.png"),
+                _make_image_component("/tmp/b.png"),
+            ]
+        )
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "image"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 1)
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, ["/tmp/a.png", "/tmp/b.png"])
+        self.assertEqual(caption, "任务完成")
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs, {})
+        self.assertEqual(len(client.sent_messages), 0)
+
+    async def test_send_explicit_local_media_group_in_topic_falls_back(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123#456", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        chain = chain_type(
+            [
+                plain_type(text="任务完成"),
+                _make_image_component("/tmp/a.png"),
+                _make_image_component("/tmp/b.png"),
+            ]
+        )
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "image"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 0)
+        media_requests = [
+            request
+            for request in client.requests
+            if type(request).__name__ == "SendMediaRequest"
+        ]
+        self.assertEqual(len(media_requests), 2)
+
 
 @unittest.skipUnless(
     REAL_TELETHON_SITE_PACKAGES.exists(),

@@ -52,6 +52,9 @@ TELETHON_RETRY_DELAY_SECONDS = 1
 OUTER_RECONNECT_BASE_DELAY_SECONDS = 1.0
 OUTER_RECONNECT_MAX_DELAY_SECONDS = 30.0
 OUTER_RECONNECT_RESET_AFTER_SECONDS = 300.0
+PREMIUM_STATUS_REFRESH_INTERVAL_SECONDS = 300.0
+TELEGRAM_MAX_FILE_BYTES_DEFAULT = 2_097_152_000
+TELEGRAM_MAX_FILE_BYTES_PREMIUM = 4_194_304_000
 
 
 @register_platform_adapter(
@@ -82,6 +85,7 @@ class TelethonPlatformAdapter(Platform):
         self._stop_requested = False
         self._main_task: asyncio.Task | None = None
         self._cleanup_task: asyncio.Task | None = None
+        self._premium_refresh_task: asyncio.Task | None = None
         self._retry_sleep_task: asyncio.Task | None = None
         self._reconnect_attempt = 0
         self._next_reconnect_at_monotonic: float | None = None
@@ -93,6 +97,7 @@ class TelethonPlatformAdapter(Platform):
         self._downloaded_temp_files: dict[str, float] = {}
         self._media_temp_dir = self._build_media_temp_dir()
         self._message_converter = TelethonMessageConverter(self)
+        self._is_premium_user = False
 
     def meta(self) -> PlatformMetadata:
         adapter_id = str(self.config.get("id") or "telethon_userbot")
@@ -189,6 +194,13 @@ class TelethonPlatformAdapter(Platform):
             except asyncio.CancelledError:
                 pass
 
+        if self._premium_refresh_task and not self._premium_refresh_task.done():
+            self._premium_refresh_task.cancel()
+            try:
+                await self._premium_refresh_task
+            except asyncio.CancelledError:
+                pass
+
         for entry in self._media_group_cache.values():
             task = entry.get("task")
             if task and not task.done():
@@ -214,6 +226,7 @@ class TelethonPlatformAdapter(Platform):
             session_id=session.session_id,
             client=self.client,
         )
+        message_event.adapter_capability = self._build_adapter_capability()
         message_event.telethon_language = self.language
         await message_event.send(message_chain)
         await super().send_by_session(session, message_chain)
@@ -232,6 +245,8 @@ class TelethonPlatformAdapter(Platform):
         me = await self.client.get_me()
         self.self_id = str(me.id)
         self.self_username = str(getattr(me, "username", "") or "").strip().lower()
+        self._update_premium_status(me)
+        self._start_premium_refresh_task()
 
         logger.info(
             "[Telethon] Userbot started: %s username=%s "
@@ -293,6 +308,15 @@ class TelethonPlatformAdapter(Platform):
         task = self._main_task
         self.client = None
         self._main_task = None
+        premium_refresh_task = self._premium_refresh_task
+        self._premium_refresh_task = None
+
+        if premium_refresh_task and not premium_refresh_task.done():
+            premium_refresh_task.cancel()
+            try:
+                await premium_refresh_task
+            except asyncio.CancelledError:
+                pass
 
         if client:
             try:
@@ -306,6 +330,30 @@ class TelethonPlatformAdapter(Platform):
                 await task
             except asyncio.CancelledError:
                 pass
+
+    def _update_premium_status(self, me: Any) -> None:
+        self._is_premium_user = bool(getattr(me, "premium", False))
+
+    def _start_premium_refresh_task(self) -> None:
+        if self._premium_refresh_task and not self._premium_refresh_task.done():
+            self._premium_refresh_task.cancel()
+        self._premium_refresh_task = asyncio.create_task(self._premium_refresh_loop())
+
+    async def _premium_refresh_loop(self) -> None:
+        try:
+            while not self._stop_requested:
+                await asyncio.sleep(PREMIUM_STATUS_REFRESH_INTERVAL_SECONDS)
+                client = self.client
+                if self._stop_requested or client is None:
+                    break
+                try:
+                    me = await client.get_me()
+                except Exception as exc:
+                    logger.debug("[Telethon] Failed to refresh premium status: %s", exc)
+                    continue
+                self._update_premium_status(me)
+        except asyncio.CancelledError:
+            raise
 
     def _should_retry_client_error(self, exc: Exception) -> bool:
         if self._stop_requested:
@@ -616,9 +664,27 @@ class TelethonPlatformAdapter(Platform):
             session_id=abm.session_id,
             client=self.client,
         )
+        message_event.adapter_capability = self._build_adapter_capability()
         message_event.telethon_debug_logging = self.debug_logging
         message_event.telethon_language = self.language
         self.commit_event(message_event)
+
+    def _build_adapter_capability(self) -> dict[str, Any]:
+        return {
+            "supports_media_group": True,
+            "supports_spoiler": False,
+            "max_items": 10,
+            "supported_types": ["image", "video"],
+            "supports_mixed_types": True,
+            "upload_constraints": {
+                "max_single_file_bytes": (
+                    TELEGRAM_MAX_FILE_BYTES_PREMIUM
+                    if self._is_premium_user
+                    else TELEGRAM_MAX_FILE_BYTES_DEFAULT
+                ),
+                "max_total_group_bytes": None,
+            },
+        }
 
     async def _handle_grouped_message(
         self,
