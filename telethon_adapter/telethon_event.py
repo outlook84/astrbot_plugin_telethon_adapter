@@ -23,6 +23,11 @@ from astrbot.api.message_components import (
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from telethon import functions, types, utils as telethon_utils
 
+try:
+    from .fast_upload import build_input_media, should_use_fast_upload
+except ImportError:
+    from telethon_adapter.fast_upload import build_input_media, should_use_fast_upload
+
 
 class TelethonEvent(AstrMessageEvent):
     META_ATTR = "_gdl_meta"
@@ -95,6 +100,12 @@ class TelethonEvent(AstrMessageEvent):
             top_msg_id=self.thread_id,
         )
 
+    @staticmethod
+    def _normalize_low_level_reply_to(reply_to: Any | None) -> Any | None:
+        if reply_to is None or isinstance(reply_to, types.InputReplyToMessage):
+            return reply_to
+        return types.InputReplyToMessage(reply_to_msg_id=int(reply_to))
+
     async def _resolve_input_peer(self) -> Any:
         get_input_entity = getattr(self.client, "get_input_entity", None)
         if callable(get_input_entity):
@@ -164,7 +175,9 @@ class TelethonEvent(AstrMessageEvent):
         spoiler: bool = False,
     ) -> Any:
         telethon_reply_to = self._build_reply_to(reply_to)
-        if not self._should_use_low_level_media_request(spoiler=spoiler):
+        if not self._should_use_low_level_media_request(
+            spoiler=spoiler
+        ) and not should_use_fast_upload(self.client, path):
             payload: dict[str, Any] = {
                 "caption": caption,
                 "reply_to": telethon_reply_to,
@@ -180,15 +193,17 @@ class TelethonEvent(AstrMessageEvent):
             caption or "",
             None,
         )
-        file_to_media = getattr(self.client, "_file_to_media", None)
-        if not callable(file_to_media):
-            raise RuntimeError("Telethon client does not expose _file_to_media")
+        low_level_reply_to = self._normalize_low_level_reply_to(telethon_reply_to)
         media_kwargs: dict[str, Any] = {}
         if mime_type is not None:
             media_kwargs["mime_type"] = mime_type
         if attributes:
             media_kwargs["attributes"] = attributes
-        _file_handle, media, _is_image = await file_to_media(path, **media_kwargs)
+        _file_handle, media, _is_image = await build_input_media(
+            self.client,
+            path,
+            **media_kwargs,
+        )
         if spoiler:
             media = await self._finalize_spoiler_media(
                 entity,
@@ -198,7 +213,7 @@ class TelethonEvent(AstrMessageEvent):
         request = functions.messages.SendMediaRequest(
             peer=entity,
             media=media,
-            reply_to=telethon_reply_to,
+            reply_to=low_level_reply_to,
             message=parsed_caption,
             entities=msg_entities,
         )
@@ -358,16 +373,16 @@ class TelethonEvent(AstrMessageEvent):
         spoiler: bool = False,
         supports_streaming: bool = False,
     ) -> Any:
-        file_to_media = getattr(self.client, "_file_to_media", None)
-        if not callable(file_to_media):
-            raise RuntimeError("Telethon client does not expose _file_to_media")
-
         media_kwargs: dict[str, Any] = {}
         if supports_streaming:
             media_kwargs["supports_streaming"] = True
             media_kwargs["nosound_video"] = True
 
-        _file_handle, media, _is_image = await file_to_media(path, **media_kwargs)
+        _file_handle, media, _is_image = await build_input_media(
+            self.client,
+            path,
+            **media_kwargs,
+        )
         if spoiler:
             return await self._finalize_spoiler_media(
                 entity,
@@ -433,7 +448,7 @@ class TelethonEvent(AstrMessageEvent):
         request = functions.messages.SendMultiMediaRequest(
             peer=entity,
             multi_media=single_media,
-            reply_to=self._build_reply_to(reply_to),
+            reply_to=self._normalize_low_level_reply_to(self._build_reply_to(reply_to)),
         )
         await self.client(request)
 
@@ -500,6 +515,9 @@ class TelethonEvent(AstrMessageEvent):
             async with self._chat_action_scope(action_name, fallback_action):
                 if not self._should_use_low_level_media_group_request(
                     has_spoiler=has_spoiler
+                ) and not any(
+                    should_use_fast_upload(self.client, path)
+                    for path, _spoiler, _is_video in media_items
                 ):
                     await self.client.send_file(
                         self.peer,

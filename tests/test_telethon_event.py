@@ -854,6 +854,67 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs, {})
         self.assertEqual(len(client.sent_messages), 0)
 
+    async def test_send_local_image_fast_upload_uses_send_media_request(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        original_should_use_fast_upload = module.should_use_fast_upload
+        original_build_input_media = module.build_input_media
+
+        module.should_use_fast_upload = lambda _client, _file: True
+
+        async def _build_input_media(_client, _file, **_kwargs):
+            return None, "fast-media:/tmp/a.png", False
+
+        module.build_input_media = _build_input_media
+        try:
+            await event.send(chain_type([_make_image_component("/tmp/a.png")]))
+        finally:
+            module.should_use_fast_upload = original_should_use_fast_upload
+            module.build_input_media = original_build_input_media
+
+        self.assertEqual(len(client.sent_files), 0)
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(request.media, "fast-media:/tmp/a.png")
+
+    async def test_send_local_image_fast_upload_wraps_reply_to_for_low_level_request(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        reply_type = sys.modules["astrbot.api.message_components"].Reply
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        original_should_use_fast_upload = module.should_use_fast_upload
+        original_build_input_media = module.build_input_media
+
+        module.should_use_fast_upload = lambda _client, _file: True
+
+        async def _build_input_media(_client, _file, **_kwargs):
+            return None, "fast-media:/tmp/a.png", False
+
+        module.build_input_media = _build_input_media
+        try:
+            await event.send(
+                chain_type(
+                    [
+                        reply_type(id="307"),
+                        _make_image_component("/tmp/a.png"),
+                    ]
+                )
+            )
+        finally:
+            module.should_use_fast_upload = original_should_use_fast_upload
+            module.build_input_media = original_build_input_media
+
+        request = next(
+            request for request in client.requests if type(request).__name__ == "SendMediaRequest"
+        )
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 307)
+        self.assertIsNone(request.reply_to.top_msg_id)
+
     async def test_send_explicit_local_media_group_in_topic_falls_back(self):
         module = _load_telethon_event_module()
         client = _FakeClient()

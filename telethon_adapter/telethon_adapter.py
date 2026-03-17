@@ -236,6 +236,7 @@ class TelethonPlatformAdapter(Platform):
 
     async def _run_client_once(self, client_kwargs: dict[str, Any]) -> None:
         self.client = self._create_client(client_kwargs)
+        setattr(self.client, "telethon_debug_logging", bool(self.debug_logging))
         await self.client.connect()
         if not await self.client.is_user_authorized():
             raise RuntimeError(

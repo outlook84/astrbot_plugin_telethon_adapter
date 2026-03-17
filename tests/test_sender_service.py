@@ -245,6 +245,63 @@ class TelethonSenderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.reply_to.reply_to_msg_id, 456)
         self.assertEqual(request.reply_to.top_msg_id, 456)
 
+    async def test_send_html_file_fast_upload_uses_send_media_request(self):
+        sender = TelethonSender()
+        client = _FakeClient()
+        original_should_use_fast_upload = sender_module.should_use_fast_upload
+        original_build_input_media = sender_module.build_input_media
+
+        sender_module.should_use_fast_upload = lambda _client, _file: True
+
+        async def _build_input_media(_client, _file, **_kwargs):
+            return None, "fast-media:/tmp/avatar.png", False
+
+        sender_module.build_input_media = _build_input_media
+        try:
+            result = await sender.send_html_message(
+                _FakeEvent(client),
+                "hello",
+                file_path="/tmp/avatar.png",
+            )
+        finally:
+            sender_module.should_use_fast_upload = original_should_use_fast_upload
+            sender_module.build_input_media = original_build_input_media
+
+        self.assertEqual(getattr(result, "id", None), 90)
+        self.assertEqual(len(client.sent_files), 0)
+        request = client.requests[0]
+        self.assertEqual(type(request).__name__, "SendMediaRequest")
+        self.assertEqual(request.media, "fast-media:/tmp/avatar.png")
+
+    async def test_send_html_file_fast_upload_wraps_reply_to_for_low_level_request(self):
+        sender = TelethonSender()
+        client = _FakeClient()
+        original_should_use_fast_upload = sender_module.should_use_fast_upload
+        original_build_input_media = sender_module.build_input_media
+
+        sender_module.should_use_fast_upload = lambda _client, _file: True
+
+        async def _build_input_media(_client, _file, **_kwargs):
+            return None, "fast-media:/tmp/avatar.png", False
+
+        sender_module.build_input_media = _build_input_media
+        try:
+            await sender.send_html_message(
+                _FakeEvent(client, reply_to_msg_id=66),
+                "hello",
+                file_path="/tmp/avatar.png",
+                follow_reply=True,
+            )
+        finally:
+            sender_module.should_use_fast_upload = original_should_use_fast_upload
+            sender_module.build_input_media = original_build_input_media
+
+        request = client.requests[0]
+        self.assertEqual(type(request).__name__, "SendMediaRequest")
+        self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
+        self.assertEqual(request.reply_to.reply_to_msg_id, 66)
+        self.assertIsNone(request.reply_to.top_msg_id)
+
     async def test_schedule_delete_message_deletes_later(self):
         sender = TelethonSender()
         client = _FakeClient()

@@ -6,6 +6,8 @@ from typing import Any
 
 from telethon import functions, types
 
+from ..fast_upload import build_input_media, should_use_fast_upload
+
 
 class TelethonSender:
     def __init__(self) -> None:
@@ -79,6 +81,12 @@ class TelethonSender:
         )
 
     @staticmethod
+    def _normalize_low_level_reply_to(reply_to: Any | None) -> Any | None:
+        if reply_to is None or isinstance(reply_to, types.InputReplyToMessage):
+            return reply_to
+        return types.InputReplyToMessage(reply_to_msg_id=int(reply_to))
+
+    @staticmethod
     async def _resolve_input_peer(client: Any, peer: Any) -> Any:
         get_input_entity = getattr(client, "get_input_entity", None)
         if callable(get_input_entity):
@@ -115,7 +123,7 @@ class TelethonSender:
         reply_to: Any | None,
         link_preview: bool,
     ) -> Any:
-        if not isinstance(reply_to, types.InputReplyToMessage):
+        if not self._should_use_low_level_request(reply_to):
             return await client.send_message(
                 peer,
                 text,
@@ -144,7 +152,10 @@ class TelethonSender:
         *,
         reply_to: Any | None,
     ) -> Any:
-        if not isinstance(reply_to, types.InputReplyToMessage):
+        if not self._should_use_low_level_request(reply_to) and not should_use_fast_upload(
+            client,
+            file_path,
+        ):
             return await client.send_file(
                 peer,
                 file=file_path,
@@ -159,18 +170,20 @@ class TelethonSender:
             caption or "",
             "html",
         )
-        file_to_media = getattr(client, "_file_to_media", None)
-        if not callable(file_to_media):
-            raise RuntimeError("Telethon client does not expose _file_to_media")
-        _file_handle, media, _is_image = await file_to_media(file_path)
+        low_level_reply_to = self._normalize_low_level_reply_to(reply_to)
+        _file_handle, media, _is_image = await build_input_media(client, file_path)
         request = functions.messages.SendMediaRequest(
             peer=entity,
             media=media,
-            reply_to=reply_to,
+            reply_to=low_level_reply_to,
             message=parsed_caption,
             entities=msg_entities,
         )
         return await self._execute_request(client, request, entity)
+
+    @staticmethod
+    def _should_use_low_level_request(reply_to: Any | None) -> bool:
+        return isinstance(reply_to, types.InputReplyToMessage)
 
     def schedule_delete_message(
         self,
