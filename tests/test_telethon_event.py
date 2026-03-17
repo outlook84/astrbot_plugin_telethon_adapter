@@ -524,6 +524,28 @@ def _make_image_component(path: str):
     return image
 
 
+def _make_video_component(path: str):
+    video_type = sys.modules["astrbot.api.message_components"].Video
+    video = video_type()
+
+    async def _convert_to_file_path():
+        return path
+
+    video.convert_to_file_path = _convert_to_file_path
+    return video
+
+
+def _make_file_component(path: str, name: str = "file.bin"):
+    file_type = sys.modules["astrbot.api.message_components"].File
+    file_component = file_type(name=name)
+
+    async def _get_file():
+        return path
+
+    file_component.get_file = _get_file
+    return file_component
+
+
 class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
     def test_parse_session_target_supports_topic_session_id(self):
         module = _load_telethon_event_module()
@@ -854,6 +876,35 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs, {})
         self.assertEqual(len(client.sent_messages), 0)
 
+    async def test_send_explicit_local_media_group_allows_mixed_image_and_video(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        chain = chain_type(
+            [
+                plain_type(text="任务完成"),
+                _make_image_component("/tmp/a.png"),
+                _make_video_component("/tmp/b.mp4"),
+            ]
+        )
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "mixed"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 1)
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, ["/tmp/a.png", "/tmp/b.mp4"])
+        self.assertEqual(caption, "任务完成")
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs, {})
+
     async def test_send_local_image_fast_upload_uses_send_media_request(self):
         module = _load_telethon_event_module()
         client = _FakeClient()
@@ -976,6 +1027,60 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(multi_request.multi_media[0].message, "任务完成")
         self.assertTrue(multi_request.multi_media[0].media.spoiler)
         self.assertFalse(multi_request.multi_media[1].media.spoiler)
+
+    async def test_send_explicit_local_mixed_media_group_with_spoiler_uses_multi_media_request(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        image = _make_image_component("/tmp/a.png")
+        video = _make_video_component("/tmp/b.mp4")
+        video.spoiler = True
+        chain = chain_type([plain_type(text="任务完成"), image, video])
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "mixed"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 0)
+        multi_request = next(
+            request
+            for request in client.requests
+            if type(request).__name__ == "SendMultiMediaRequest"
+        )
+        self.assertEqual(len(multi_request.multi_media), 2)
+        self.assertFalse(multi_request.multi_media[0].media.spoiler)
+        self.assertTrue(multi_request.multi_media[1].media.spoiler)
+
+    async def test_send_file_with_spoiler_flag_does_not_force_low_level_spoiler_flow(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        file_component = _make_file_component("/tmp/archive.zip", name="archive.zip")
+        file_component.spoiler = True
+
+        await event.send(chain_type([file_component]))
+
+        self.assertEqual(len(client.sent_files), 1)
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, "/tmp/archive.zip")
+        self.assertEqual(caption, "archive.zip")
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs, {})
+        self.assertEqual(
+            [
+                request
+                for request in client.requests
+                if type(request).__name__ in {"SendMediaRequest", "UploadMediaRequest"}
+            ],
+            [],
+        )
 
 
 @unittest.skipUnless(
