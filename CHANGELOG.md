@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0 - 2026-03-18
+
+- 一批细节改进与稳定性增强。
+
+- A round of usability and stability refinements.
+
 ## 0.7.0 - 2026-03-17
 
 - 新增 fast upload 支持。
