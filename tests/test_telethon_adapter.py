@@ -92,9 +92,14 @@ def _install_telethon_stubs() -> None:
     class MemorySession:
         pass
 
+    class StringSession:
+        def __init__(self, session=None):
+            self.session = session
+
     events_module.NewMessage = _NewMessage
     network_module.connection = types.SimpleNamespace()
     sessions_module.MemorySession = MemorySession
+    sessions_module.StringSession = StringSession
     telethon_module.TelegramClient = TelegramClient
     telethon_module.events = events_module
     telethon_module.functions = functions_module
@@ -189,6 +194,7 @@ class TelethonAdapterTests(unittest.IsolatedAsyncioTestCase):
         }
         adapter._convert_message = _convert_message
         adapter._commit_abm = committed.append
+        adapter.trigger_prefix = ""
 
         await module.TelethonPlatformAdapter._process_grouped_message(
             adapter,
