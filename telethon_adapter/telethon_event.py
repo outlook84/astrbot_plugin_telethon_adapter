@@ -322,10 +322,12 @@ class TelethonEvent(AstrMessageEvent):
             return reply_to
         chunks = self._pack_text_chunks(text_parts)
         text_parts.clear()
+        if chunks:
+            await self.send_typing()
         for chunk in chunks:
             if not self._render_text_chunk(chunk).strip():
                 continue
-            await self._send_text_with_action(chunk, reply_to)
+            await self._send_text_with_action(chunk, reply_to, send_typing_action=False)
         return reply_to
 
     async def _send_media(
@@ -875,9 +877,14 @@ class TelethonEvent(AstrMessageEvent):
         return result.strip()
 
     async def _send_text_with_action(
-        self, text: str | list[tuple[str, bool]], reply_to: int | None
+        self,
+        text: str | list[tuple[str, bool]],
+        reply_to: int | None,
+        *,
+        send_typing_action: bool = True,
     ):
-        await self.send_typing()
+        if send_typing_action:
+            await self.send_typing()
         effective_reply_to = self._effective_reply_to(reply_to)
         if isinstance(text, list):
             formatted_text = self._render_text_chunk(text)
