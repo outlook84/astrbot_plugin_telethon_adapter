@@ -404,12 +404,22 @@ def _load_telethon_event_module():
     _install_astrbot_stubs()
     _install_telethon_stubs()
     _install_markdown_stubs()
-    module_path = PROJECT_ROOT / "telethon_adapter" / "telethon_event.py"
-    spec = importlib.util.spec_from_file_location("test_telethon_event_module", module_path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    return module
+    package_name = "telethon_adapter"
+    package_path = PROJECT_ROOT / package_name
+    package_module = types.ModuleType(package_name)
+    package_module.__path__ = [str(package_path)]
+    sys.modules[package_name] = package_module
+
+    for module_name in ["i18n", "fast_upload", "telethon_event"]:
+        full_name = f"{package_name}.{module_name}"
+        module_path = package_path / f"{module_name}.py"
+        spec = importlib.util.spec_from_file_location(full_name, module_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        sys.modules[full_name] = module
+        spec.loader.exec_module(module)
+
+    return sys.modules["telethon_adapter.telethon_event"]
 
 
 def _load_telethon_event_module_with_real_telethon():
@@ -695,6 +705,36 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
             '<a href="tg://user?id=123456">@Alice</a>  hello &lt;world&gt;',
         )
         self.assertEqual(kwargs["parse_mode"], "html")
+
+    async def test_send_splits_long_html_mentions(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        at_type = sys.modules["astrbot.api.message_components"].At
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(
+            chain_type(
+                [
+                    at_type(qq="123456", name="A" * 5000),
+                ]
+            )
+        )
+
+        self.assertGreater(len(client.sent_messages), 1)
+        self.assertTrue(
+            all(
+                len(text) <= module.TelethonEvent.MAX_MESSAGE_LENGTH
+                for _, text, _ in client.sent_messages
+            )
+        )
+        self.assertTrue(
+            all(kwargs.get("parse_mode") == "html" for _, _, kwargs in client.sent_messages)
+        )
+        self.assertTrue(
+            all(text.startswith('<a href="tg://user?id=123456">') for _, text, _ in client.sent_messages)
+        )
+        self.assertTrue(all(text.rstrip().endswith("</a>") for _, text, _ in client.sent_messages))
 
     async def test_send_topic_session_defaults_reply_to_thread_root(self):
         module = _load_telethon_event_module()

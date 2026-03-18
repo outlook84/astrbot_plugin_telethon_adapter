@@ -20,12 +20,19 @@ from telethon.tl.types import (
     MessageMediaGeoLive,
 )
 
+from .i18n import normalize_language, t
 from .lazy_media import LazyFile, LazyImage, LazyRecord, LazyVideo, TelethonLazyMedia
 
 
 class TelethonMessageConverter:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
+
+    def _language(self) -> str:
+        return normalize_language(getattr(self.adapter, "language", None))
+
+    def _label(self, key: str) -> str:
+        return f"[{t(self._language(), key)}]"
 
     async def should_treat_reply_to_self_as_command(
         self,
@@ -264,7 +271,7 @@ class TelethonMessageConverter:
             media_components = await self.parse_media_components(msg)
             message.message.extend(media_components)
             if not message.message_str and media_components:
-                message.message_str = "[媒体消息]"
+                message.message_str = self._label("message.media.placeholder")
 
         if getattr(self.adapter, "debug_logging", False):
             logger.info(
@@ -570,7 +577,7 @@ class TelethonMessageConverter:
             full_name = " ".join(x for x in [first_name, last_name] if x).strip()
             phone_number = str(getattr(media, "phone_number", "") or "").strip()
             user_id = str(getattr(media, "user_id", "") or "").strip()
-            text = f"[联系人] {full_name}".strip()
+            text = f"{self._label('message.media.contact')} {full_name}".strip()
             if phone_number:
                 text += f" {phone_number}"
             if user_id and user_id != "0":
@@ -583,8 +590,13 @@ class TelethonMessageConverter:
                 lat = float(getattr(geo, "lat", 0.0))
                 lon = float(getattr(geo, "long", 0.0))
                 return [
-                    Location(lat=lat, lon=lon, title="Location", content=f"{lat},{lon}"),
-                    Plain(text=f"[位置] {lat},{lon}"),
+                    Location(
+                        lat=lat,
+                        lon=lon,
+                        title=t(self._language(), "message.media.location_title"),
+                        content=f"{lat},{lon}",
+                    ),
+                    Plain(text=f"{self._label('message.media.location')} {lat},{lon}"),
                 ]
 
         if not self.adapter.download_incoming_media:
@@ -617,7 +629,13 @@ class TelethonMessageConverter:
                 sticker_emoji = str(getattr(sticker_attr, "alt", "") or "").strip()
                 components.append(LazyImage(downloader=lazy_media))
                 components.append(
-                    Plain(text=f"[贴纸] {sticker_emoji}" if sticker_emoji else "[贴纸]")
+                    Plain(
+                        text=(
+                            f"{self._label('message.media.sticker')} {sticker_emoji}"
+                            if sticker_emoji
+                            else self._label("message.media.sticker")
+                        )
+                    )
                 )
                 return components
 
@@ -626,7 +644,7 @@ class TelethonMessageConverter:
             elif is_audio or mime_type.startswith("audio/"):
                 components.append(LazyRecord(downloader=lazy_media))
                 components.append(LazyFile(name=file_name, downloader=lazy_media))
-                components.append(Plain(text=f"[音频] {file_name}"))
+                components.append(Plain(text=f"{self._label('message.media.audio')} {file_name}"))
             else:
                 components.append(LazyFile(name=file_name, downloader=lazy_media))
             return components

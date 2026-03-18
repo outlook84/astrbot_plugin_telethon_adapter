@@ -24,6 +24,11 @@ from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from telethon import functions, types, utils as telethon_utils
 
 try:
+    from .i18n import get_event_language, t
+except ImportError:
+    from telethon_adapter.i18n import get_event_language, t
+
+try:
     from .fast_upload import build_input_media, should_use_fast_upload
 except ImportError:
     from telethon_adapter.fast_upload import build_input_media, should_use_fast_upload
@@ -268,6 +273,9 @@ class TelethonEvent(AstrMessageEvent):
             "sender_id": getattr(sender, "user_id", None),
             "reply_to": self._effective_reply_to(reply_to),
         }
+
+    def _label(self, key: str) -> str:
+        return f"[{t(get_event_language(self), key)}]"
 
     async def _send_chat_action(self, action: types.TypeSendMessageAction) -> None:
         try:
@@ -580,7 +588,11 @@ class TelethonEvent(AstrMessageEvent):
 
             if isinstance(item, Location):
                 text_parts.append(
-                    (f"[位置] {item.lat},{item.lon} {item.title or ''}".strip(), False)
+                    (
+                        f"{self._label('message.media.location')} "
+                        f"{item.lat},{item.lon} {item.title or ''}".strip(),
+                        False,
+                    )
                 )
                 continue
 
@@ -706,6 +718,72 @@ class TelethonEvent(AstrMessageEvent):
         return chunks
 
     @classmethod
+    def _split_html_message(cls, html_text: str) -> list[str]:
+        if len(html_text) <= cls.MAX_MESSAGE_LENGTH:
+            return [html_text]
+
+        token_pattern = re.compile(r"(<[^>]+>)")
+        void_tags = {"br", "hr"}
+        stack: list[tuple[str, str]] = []
+        chunks: list[str] = []
+        current = ""
+
+        def closing_tags() -> str:
+            return "".join(f"</{tag}>" for tag, _ in reversed(stack))
+
+        def opening_tags() -> str:
+            return "".join(open_tag for _, open_tag in stack)
+
+        def flush_current() -> None:
+            nonlocal current
+            if current:
+                chunks.append(current + closing_tags())
+                current = opening_tags()
+
+        def append_text(text: str) -> None:
+            nonlocal current
+            while text:
+                reserved = len(closing_tags())
+                available = cls.MAX_MESSAGE_LENGTH - len(current) - reserved
+                if available <= 0:
+                    flush_current()
+                    continue
+                if len(text) <= available:
+                    current += text
+                    return
+                current += text[:available]
+                text = text[available:]
+                flush_current()
+
+        for token in token_pattern.split(html_text):
+            if not token:
+                continue
+            if token.startswith("<") and token.endswith(">"):
+                tag_match = re.match(r"</?([a-zA-Z0-9]+)", token)
+                if not tag_match:
+                    append_text(token)
+                    continue
+                tag_name = tag_match.group(1).lower()
+                is_closing = token.startswith("</")
+                is_self_closing = token.endswith("/>") or tag_name in void_tags
+                if len(current) + len(token) + len(closing_tags()) > cls.MAX_MESSAGE_LENGTH:
+                    flush_current()
+                current += token
+                if is_closing:
+                    for index in range(len(stack) - 1, -1, -1):
+                        if stack[index][0] == tag_name:
+                            del stack[index:]
+                            break
+                elif not is_self_closing:
+                    stack.append((tag_name, token))
+                continue
+            append_text(token)
+
+        if current:
+            chunks.append(current + closing_tags())
+        return [chunk for chunk in chunks if chunk]
+
+    @classmethod
     def _component_has_spoiler(cls, item: Any) -> bool:
         for attr_name in ("spoiler", "has_spoiler", "is_spoiler"):
             value = getattr(item, attr_name, None)
@@ -743,6 +821,12 @@ class TelethonEvent(AstrMessageEvent):
 
         for part, is_html in text_parts:
             if not part:
+                continue
+            if is_html and len(part) > self.MAX_MESSAGE_LENGTH:
+                flush_current()
+                packed.extend(
+                    [[(chunk, True)] for chunk in self._split_html_message(part)]
+                )
                 continue
             if not is_html and len(part) > self.MAX_MESSAGE_LENGTH:
                 flush_current()
@@ -905,12 +989,16 @@ class TelethonEvent(AstrMessageEvent):
             )
         try:
             formatted_text = self._format_markdown_for_telethon_html(text)
-            return await self._send_text_request(
-                formatted_text,
-                parse_mode="html",
-                reply_to=reply_to,
-                link_preview=False,
-            )
+            html_chunks = self._split_html_message(formatted_text)
+            result = None
+            for html_chunk in html_chunks:
+                result = await self._send_text_request(
+                    html_chunk,
+                    parse_mode="html",
+                    reply_to=reply_to,
+                    link_preview=False,
+                )
+            return result
         except Exception as e:
             context = self._message_log_context(effective_reply_to)
             logger.warning(

@@ -135,6 +135,23 @@ class LazyMediaTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, os.path.join(temp_dir, "payload.bin"))
             self.assertEqual(Path(result).read_bytes(), b"payload")
 
+    async def test_ensure_downloaded_sanitizes_fallback_name_to_temp_dir(self):
+        lazy_media = _load_lazy_media_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            message = _FakeMessage(b"payload")
+            downloader = lazy_media.TelethonLazyMedia(
+                msg=message,
+                temp_dir_getter=lambda: temp_dir,
+                register_temp_file=lambda path: None,
+                fallback_name="../nested/escape.bin",
+            )
+
+            result = await downloader.ensure_downloaded()
+
+            self.assertEqual(result, os.path.join(temp_dir, "escape.bin"))
+            self.assertEqual(Path(result).read_bytes(), b"payload")
+
     async def test_record_conversion_registers_original_and_wav_temp_files(self):
         lazy_media = _load_lazy_media_module()
 

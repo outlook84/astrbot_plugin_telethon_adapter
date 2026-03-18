@@ -37,6 +37,19 @@ class TelethonLazyMedia:
     def register_temp_file(self, path: str) -> None:
         self._register_temp_file(path)
 
+    @staticmethod
+    def _build_safe_target_path(temp_dir: str, fallback_name: str) -> str:
+        temp_root = Path(temp_dir).resolve()
+        safe_name = Path(str(fallback_name or "")).name
+        if safe_name in {"", ".", ".."}:
+            safe_name = "telethon_media.bin"
+        target = (temp_root / safe_name).resolve()
+        try:
+            target.relative_to(temp_root)
+        except ValueError as exc:
+            raise RuntimeError("Resolved media download path escaped temp directory") from exc
+        return str(target)
+
     async def ensure_downloaded(self) -> str:
         async with self._lock:
             if self._downloaded_path and os.path.exists(self._downloaded_path):
@@ -49,7 +62,7 @@ class TelethonLazyMedia:
                 raise RuntimeError("Telethon media download returned empty path")
 
             if isinstance(downloaded, (bytes, bytearray)):
-                target = os.path.join(temp_dir, self._fallback_name)
+                target = self._build_safe_target_path(temp_dir, self._fallback_name)
                 with open(target, "wb") as f:
                     f.write(downloaded)
             else:

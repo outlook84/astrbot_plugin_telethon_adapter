@@ -153,7 +153,7 @@ def _load_message_converter_module():
     package_module.__path__ = [str(package_path)]
     sys.modules[package_name] = package_module
 
-    for module_name in ["lazy_media", "message_converter"]:
+    for module_name in ["i18n", "lazy_media", "message_converter"]:
         full_name = f"{package_name}.{module_name}"
         module_path = package_path / f"{module_name}.py"
         spec = importlib.util.spec_from_file_location(full_name, module_path)
@@ -183,7 +183,7 @@ def _load_message_converter_module_with_real_telethon():
     package_module.__path__ = [str(package_path)]
     sys.modules[package_name] = package_module
 
-    for module_name in ["lazy_media", "message_converter"]:
+    for module_name in ["i18n", "lazy_media", "message_converter"]:
         full_name = f"{package_name}.{module_name}"
         module_path = package_path / f"{module_name}.py"
         spec = importlib.util.spec_from_file_location(full_name, module_path)
@@ -199,6 +199,8 @@ class _FakeAdapter:
     def __init__(self, temp_dir: str, download_incoming_media: bool = True) -> None:
         self.self_id = "999"
         self.self_username = "astrbot"
+        self.trigger_prefix = "-astr"
+        self.language = "zh-CN"
         self.trigger_prefix = "-astr"
         self.reply_to_self_triggers_command = False
         self.debug_logging = False
@@ -567,6 +569,31 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([type(component).__name__ for component in components], ["LazyRecord", "LazyFile", "Plain"])
         self.assertEqual(components[1].name, "voice.ogg")
         self.assertEqual(components[2].text, "[音频] voice.ogg")
+
+    async def test_parse_media_components_uses_english_labels(self):
+        module = _load_message_converter_module()
+        tl_types = sys.modules["telethon.tl.types"]
+        audio_attr = tl_types.DocumentAttributeAudio()
+        filename_attr = tl_types.DocumentAttributeFilename()
+        filename_attr.file_name = "voice.ogg"
+
+        document = types.SimpleNamespace(
+            mime_type="audio/ogg",
+            attributes=[audio_attr, filename_attr],
+        )
+        msg = _FakeMessage(
+            20,
+            media=object(),
+            document=document,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = _FakeAdapter(temp_dir)
+            adapter.language = "en-US"
+            converter = module.TelethonMessageConverter(adapter)
+            components = await converter.parse_media_components(msg)
+
+        self.assertEqual(components[2].text, "[Audio] voice.ogg")
 
     async def test_parse_media_components_skips_download_when_disabled(self):
         module = _load_message_converter_module()
