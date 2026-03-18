@@ -323,8 +323,7 @@ class TelethonEvent(AstrMessageEvent):
         chunks = self._pack_text_chunks(text_parts)
         text_parts.clear()
         for chunk in chunks:
-            rendered = self._render_text_chunk(chunk)
-            if not rendered.strip():
+            if not self._render_text_chunk(chunk).strip():
                 continue
             await self._send_text_with_action(chunk, reply_to)
         return reply_to
