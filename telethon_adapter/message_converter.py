@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 import re
 from typing import Any
 
@@ -667,5 +668,11 @@ class TelethonMessageConverter:
         if getattr(msg, "photo", None):
             return f"telethon_photo_{getattr(msg, 'id', 'unknown')}.jpg"
         if getattr(msg, "document", None):
-            return f"telethon_media_{getattr(msg, 'id', 'unknown')}.bin"
+            mime_type = str(getattr(msg.document, "mime_type", "") or "").strip()
+            guessed_extension = mimetypes.guess_extension(mime_type) if mime_type else None
+            if guessed_extension == ".jpe":
+                guessed_extension = ".jpg"
+            if not guessed_extension:
+                guessed_extension = ".bin"
+            return f"telethon_media_{getattr(msg, 'id', 'unknown')}{guessed_extension}"
         return f"telethon_file_{getattr(msg, 'id', 'unknown')}.bin"

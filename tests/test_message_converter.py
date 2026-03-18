@@ -595,6 +595,20 @@ class MessageConverterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(components[2].text, "[Audio] voice.ogg")
 
+    def test_guess_media_name_uses_mime_type_extension_for_documents(self):
+        module = _load_message_converter_module()
+        msg = _FakeMessage(
+            21,
+            document=types.SimpleNamespace(
+                mime_type="application/pdf",
+                attributes=[],
+            ),
+        )
+
+        file_name = module.TelethonMessageConverter.guess_media_name(msg)
+
+        self.assertEqual(file_name, "telethon_media_21.pdf")
+
     async def test_parse_media_components_skips_download_when_disabled(self):
         module = _load_message_converter_module()
         msg = _FakeMessage(

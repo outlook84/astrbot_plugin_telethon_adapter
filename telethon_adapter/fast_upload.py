@@ -93,7 +93,7 @@ if _FAST_UPLOAD_IMPORT_ERROR is None:
             else:
                 self.request = SaveFilePartRequest(file_id, index, b"")
 
-        async def next(self, data: bytes) -> None:
+        async def enqueue_upload(self, data: bytes) -> None:
             if self.previous is not None:
                 await self.previous
             self.previous = self.loop.create_task(self._next(data))
@@ -178,7 +178,7 @@ if _FAST_UPLOAD_IMPORT_ERROR is None:
 
         async def upload(self, part: bytes) -> None:
             assert self.senders is not None
-            await self.senders[self.upload_ticker].next(part)
+            await self.senders[self.upload_ticker].enqueue_upload(part)
             self.upload_ticker = (self.upload_ticker + 1) % len(self.senders)
 
         async def finish_upload(self) -> None:

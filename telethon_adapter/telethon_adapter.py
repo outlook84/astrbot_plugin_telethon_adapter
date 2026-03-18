@@ -809,8 +809,6 @@ class TelethonPlatformAdapter(Platform):
             if not merged.message_str and extra.message_str:
                 merged.message_str = extra.message_str
 
-        if not merged.message_str:
-            merged.message_str = "[媒体组]"
         self._commit_abm(merged)
 
     def _grouped_message_session_id(self, event: events.NewMessage.Event) -> str:
