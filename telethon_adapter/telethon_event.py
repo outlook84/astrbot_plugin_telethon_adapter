@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import os
 import re
@@ -960,6 +961,9 @@ class TelethonEvent(AstrMessageEvent):
         result = re.sub(r"\n{3,}", "\n\n", result)
         return result.strip()
 
+    async def _format_markdown_for_telethon_html_async(self, text: str) -> str:
+        return await asyncio.to_thread(self._format_markdown_for_telethon_html, text)
+
     async def _send_text_with_action(
         self,
         text: str | list[tuple[str, bool]],
@@ -988,7 +992,7 @@ class TelethonEvent(AstrMessageEvent):
                 link_preview=False,
             )
         try:
-            formatted_text = self._format_markdown_for_telethon_html(text)
+            formatted_text = await self._format_markdown_for_telethon_html_async(text)
             html_chunks = self._split_html_message(formatted_text)
             result = None
             for html_chunk in html_chunks:

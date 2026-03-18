@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REAL_TELETHON_SITE_PACKAGES = (
@@ -557,6 +558,13 @@ def _make_file_component(path: str, name: str = "file.bin"):
 
 
 class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _patch_to_thread(module):
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        return patch.object(module.asyncio, "to_thread", fake_to_thread)
+
     def test_parse_session_target_supports_topic_session_id(self):
         module = _load_telethon_event_module()
 
@@ -580,7 +588,8 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         client = _FakeClient()
         event = module.TelethonEvent("", object(), object(), "123", client)
 
-        await event._send_text_with_action("## title\n- item", 7)
+        with self._patch_to_thread(module):
+            await event._send_text_with_action("## title\n- item", 7)
 
         self.assertEqual(len(client.sent_messages), 1)
         peer, text, kwargs = client.sent_messages[0]
@@ -608,7 +617,8 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         client = _FakeClient()
         event = module.TelethonEvent("", object(), object(), "123", client)
 
-        await event._send_text_with_action("| 姓名 | 年龄 |\n| --- | --- |\n| 小明 | 18 |", None)
+        with self._patch_to_thread(module):
+            await event._send_text_with_action("| 姓名 | 年龄 |\n| --- | --- |\n| 小明 | 18 |", None)
 
         self.assertEqual(len(client.sent_messages), 1)
         _, text, kwargs = client.sent_messages[0]
@@ -617,12 +627,29 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("小明", text)
         self.assertEqual(kwargs["parse_mode"], "html")
 
+    async def test_send_text_offloads_markdown_formatting_to_thread(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        calls = []
+
+        async def fake_to_thread(func, *args, **kwargs):
+            calls.append((func, args, kwargs))
+            return func(*args, **kwargs)
+
+        with patch.object(module.asyncio, "to_thread", fake_to_thread):
+            await event._send_text_with_action("## title\n- item", None)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], module.TelethonEvent._format_markdown_for_telethon_html)
+
     async def test_send_text_falls_back_to_plain_text_on_html_error(self):
         module = _load_telethon_event_module()
         client = _FakeClient(fail_html=True)
         event = module.TelethonEvent("", object(), object(), "123", client)
 
-        await event._send_text_with_action("## title", None)
+        with self._patch_to_thread(module):
+            await event._send_text_with_action("## title", None)
 
         self.assertEqual(len(client.sent_messages), 1)
         peer, text, kwargs = client.sent_messages[0]
