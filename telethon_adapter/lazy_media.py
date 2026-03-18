@@ -125,7 +125,7 @@ class LazyFile(File):
     _downloader: TelethonLazyMedia = PrivateAttr()
 
     def __init__(self, name: str, downloader: TelethonLazyMedia, **kwargs: Any) -> None:
-        super().__init__(name=name, file="", url="")
+        super().__init__(name=name, file="", url="", **kwargs)
         object.__setattr__(self, "_downloader", downloader)
 
     async def get_file(self, allow_return_url: bool = False) -> str:
