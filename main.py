@@ -1,4 +1,5 @@
 import asyncio
+from typing import Awaitable, Callable, TypeVar
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -22,6 +23,7 @@ from .telethon_adapter.services import (
 from . import telethon_adapter  # noqa: F401  # import for platform adapter registration
 
 PRUNE_RESULT_TTL_SECONDS = 15.0
+T = TypeVar("T")
 
 
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, PLUGIN_DESC, PLUGIN_VERSION, PLUGIN_REPO)
@@ -227,8 +229,8 @@ class TelethonAdapterPlugin(Star):
         log_name: str,
         unsupported_message: str,
         failure_key: str,
-        execute: callable,
-        send_result: callable,
+        execute: Callable[[], Awaitable[T]],
+        send_result: Callable[[T], Awaitable[object]],
     ) -> None:
         self._log_command_debug(event, log_name)
         if not self._ensure_supported_event(event, unsupported_message):
