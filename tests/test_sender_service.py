@@ -12,6 +12,25 @@ REAL_TELETHON_SITE_PACKAGES = PROJECT_ROOT / ".venv" / sysconfig.get_path(
 ).removeprefix(str(PROJECT_ROOT / ".venv/"))
 
 
+def _install_astrbot_stubs() -> None:
+    astrbot_module = types.ModuleType("astrbot")
+    api_module = types.ModuleType("astrbot.api")
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            return None
+
+        def warning(self, *args, **kwargs):
+            return None
+
+        def exception(self, *args, **kwargs):
+            return None
+
+    api_module.logger = _Logger()
+    sys.modules["astrbot"] = astrbot_module
+    sys.modules["astrbot.api"] = api_module
+
+
 def _install_telethon_stubs() -> None:
     telethon_module = types.ModuleType("telethon")
     telethon_functions_module = types.ModuleType("telethon.functions")
@@ -54,6 +73,7 @@ def _install_telethon_stubs() -> None:
 
 
 def _load_sender_module():
+    _install_astrbot_stubs()
     _install_telethon_stubs()
     package_name = "telethon_adapter"
     package_path = Path(__file__).resolve().parents[1] / package_name
@@ -78,6 +98,7 @@ def _load_sender_module():
 
 
 def _load_sender_module_with_real_telethon():
+    _install_astrbot_stubs()
     for module_name in list(sys.modules):
         if module_name == "telethon" or module_name.startswith("telethon."):
             sys.modules.pop(module_name, None)
