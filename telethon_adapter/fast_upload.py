@@ -189,7 +189,13 @@ if _FAST_UPLOAD_IMPORT_ERROR is None:
         async def finish_upload(self) -> None:
             if not self.senders:
                 return
-            await asyncio.gather(*(sender.disconnect() for sender in self.senders))
+            disconnect_results = await asyncio.gather(
+                *(sender.disconnect() for sender in self.senders),
+                return_exceptions=True,
+            )
+            for result in disconnect_results:
+                if isinstance(result, Exception):
+                    logger.warning("[Telethon] Failed to disconnect fast upload sender: %s", result)
             self.senders = None
 
 
