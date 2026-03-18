@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import sysconfig
 import tempfile
 import types
 import unittest
@@ -7,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REAL_TELETHON_SITE_PACKAGES = (
-    PROJECT_ROOT / ".venv" / "lib" / "python3.13" / "site-packages"
-)
+REAL_TELETHON_SITE_PACKAGES = PROJECT_ROOT / ".venv" / sysconfig.get_path(
+    "purelib",
+    vars={"base": str(PROJECT_ROOT / ".venv"), "platbase": str(PROJECT_ROOT / ".venv")},
+).removeprefix(str(PROJECT_ROOT / ".venv/"))
 
 
 def _install_astrbot_stubs() -> None:
