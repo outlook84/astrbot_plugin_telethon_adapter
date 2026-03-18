@@ -880,7 +880,6 @@ class TelethonEvent(AstrMessageEvent):
     ):
         await self.send_typing()
         effective_reply_to = self._effective_reply_to(reply_to)
-        telethon_reply_to = self._build_reply_to(reply_to)
         if isinstance(text, list):
             formatted_text = self._render_text_chunk(text)
             if any(is_html for _, is_html in text):
