@@ -19,7 +19,7 @@ from .telethon_adapter.services import (
     TelethonStickerService,
     TelethonStatusService,
 )
-from .telethon_adapter import TelethonPlatformAdapter  # noqa: F401
+from . import telethon_adapter  # noqa: F401  # import for platform adapter registration
 
 PRUNE_RESULT_TTL_SECONDS = 15.0
 
