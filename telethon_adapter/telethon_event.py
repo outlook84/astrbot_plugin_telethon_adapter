@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 import re
 from typing import Any
@@ -38,6 +39,10 @@ try:
     from .services.message_executor import TelethonMessageExecutor
 except ImportError:
     from telethon_adapter.services.message_executor import TelethonMessageExecutor
+try:
+    from .services.message_planner import MediaAction, MediaGroupAction
+except ImportError:
+    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
 try:
     from .services.contracts import TelethonEventContext
 except ImportError:
@@ -169,46 +174,36 @@ class TelethonEvent(AstrMessageEvent):
             force_low_level=self._should_use_low_level_text_request(),
         )
 
-    async def _send_media_request(
-        self,
-        path: str,
-        *,
-        caption: str | None,
-        reply_to: int | None,
-        mime_type: str | None = None,
-        attributes: list[Any] | None = None,
-        spoiler: bool = False,
-    ) -> Any:
-        if not self._should_use_low_level_media_request(spoiler=spoiler):
-            return await self._request_sender().send_media(
-                path,
-                caption=caption,
-                parse_mode=None,
-                reply_to_msg_id=reply_to,
-                mime_type=mime_type,
-                attributes=attributes,
+    async def _send_media_request(self, action: MediaAction) -> Any:
+        action = await self._normalize_media_action_caption(action)
+        if not self._should_use_low_level_media_request(spoiler=action.spoiler):
+            return await self._request_sender().send_media_action(
+                action,
             )
 
         entity = await self._resolve_input_peer()
-        parsed_caption, msg_entities = await self._parse_formatting_entities(caption or "", None)
+        parsed_caption, msg_entities = await self._parse_formatting_entities(
+            action.caption or "",
+            action.caption_parse_mode,
+        )
         _file_handle, media, _is_image = await build_input_media(
             self.client,
-            path,
+            action.path,
             **TelethonRequestSender._build_media_kwargs(
-                mime_type=mime_type,
-                attributes=attributes,
+                mime_type=action.mime_type,
+                attributes=action.attributes,
             ),
         )
-        if spoiler:
+        if action.spoiler:
             media = await self._finalize_spoiler_media(
                 entity,
                 media,
-                mime_type=mime_type,
+                mime_type=action.mime_type,
             )
         request = functions.messages.SendMediaRequest(
             peer=entity,
             media=media,
-            reply_to=self._normalize_low_level_reply_to(self._build_reply_to(reply_to)),
+            reply_to=self._normalize_low_level_reply_to(self._build_reply_to(action.reply_to)),
             message=parsed_caption,
             entities=msg_entities,
         )
@@ -252,58 +247,46 @@ class TelethonEvent(AstrMessageEvent):
     ) -> int | None:
         return await self._message_executor.flush_text(self, text_parts, reply_to)
 
-    async def _send_media(
-        self,
-        path: str,
-        caption: str | None,
-        reply_to: int | None,
-        action_name: str,
-        fallback_action: types.TypeSendMessageAction,
-        mime_type: str | None = None,
-        attributes: list[Any] | None = None,
-        spoiler: bool = False,
-    ) -> int | None:
-        return await self._message_executor.send_media(
-            self,
-            path,
-            caption,
-            reply_to,
-            action_name,
-            fallback_action,
-            mime_type=mime_type,
-            attributes=attributes,
-            spoiler=spoiler,
-        )
+    async def _execute_media_action(self, action: MediaAction) -> int | None:
+        return await self._message_executor.execute_media_action(self, action)
 
-    async def _build_album_media(
-        self,
-        entity: Any,
-        path: str,
-        *,
-        spoiler: bool = False,
-        supports_streaming: bool = False,
-    ) -> Any:
-        return await self._message_executor.build_album_media(
-            self,
-            entity,
-            path,
-            spoiler=spoiler,
-            supports_streaming=supports_streaming,
-        )
+    async def _execute_media_group_action(self, action: MediaGroupAction) -> None:
+        action = await self._normalize_media_group_action_caption(action)
+        request_sender = self._request_sender()
+        if not self._should_use_low_level_media_group_request(
+            has_spoiler=any(spoiler for _path, spoiler, _is_video in action.media_items)
+        ) and not any(
+            request_sender.should_use_fast_upload(self.client, path)
+            for path, _spoiler, _is_video in action.media_items
+        ):
+            payload: dict[str, Any] = {
+                "caption": action.caption,
+                "reply_to": self._build_reply_to(action.reply_to),
+            }
+            if action.caption_parse_mode is not None:
+                payload["parse_mode"] = action.caption_parse_mode
+            await self.client.send_file(
+                self.peer,
+                file=[path for path, _spoiler, _is_video in action.media_items],
+                **payload,
+            )
+            return
+        await request_sender.send_media_group_action(action)
 
-    async def _send_local_media_group_request(
+    async def _normalize_media_action_caption(self, action: MediaAction) -> MediaAction:
+        if not action.caption or action.caption_parse_mode != "markdown":
+            return action
+        formatted_caption = await self._format_markdown_for_telethon_html_async(action.caption)
+        return replace(action, caption=formatted_caption, caption_parse_mode="html")
+
+    async def _normalize_media_group_action_caption(
         self,
-        media_items: list[tuple[str, bool, bool]],
-        *,
-        caption: str | None,
-        reply_to: int | None,
-    ) -> None:
-        await self._message_executor.send_local_media_group_request(
-            self,
-            media_items,
-            caption=caption,
-            reply_to=reply_to,
-        )
+        action: MediaGroupAction,
+    ) -> MediaGroupAction:
+        if not action.caption or action.caption_parse_mode != "markdown":
+            return action
+        formatted_caption = await self._format_markdown_for_telethon_html_async(action.caption)
+        return replace(action, caption=formatted_caption, caption_parse_mode="html")
 
     async def _try_send_local_media_group(self, message: MessageChain) -> bool:
         return await self._message_dispatcher.try_send_local_media_group(self, message)

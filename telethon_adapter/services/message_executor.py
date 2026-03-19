@@ -11,6 +11,10 @@ try:
     from .contracts import TelethonEventContext, TelethonExecutionHost
 except ImportError:
     from telethon_adapter.services.contracts import TelethonEventContext, TelethonExecutionHost
+try:
+    from .message_planner import MediaAction, MediaGroupAction
+except ImportError:
+    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
 
 BuildInputMedia = Callable[..., Awaitable[tuple[Any, Any, bool]]]
 
@@ -227,29 +231,15 @@ class TelethonMessageExecutor:
             link_preview=False,
         )
 
-    async def send_media(
+    async def execute_media_action(
         self,
         event: TelethonExecutionHost,
-        path: str,
-        caption: str | None,
-        reply_to: int | None,
-        action_name: str,
-        fallback_action: Any,
-        mime_type: str | None = None,
-        attributes: list[Any] | None = None,
-        spoiler: bool = False,
+        action: MediaAction,
     ) -> int | None:
-        effective_reply_to = event._effective_reply_to(reply_to)
+        effective_reply_to = event._effective_reply_to(action.reply_to)
         try:
-            async with self.chat_action_scope(event, action_name, fallback_action):
-                await event._send_media_request(
-                    path,
-                    caption=caption,
-                    reply_to=reply_to,
-                    mime_type=mime_type,
-                    attributes=attributes,
-                    spoiler=spoiler,
-                )
+            async with self.chat_action_scope(event, action.action_name, action.fallback_action):
+                await event._send_media_request(action)
         except Exception:
             context = self.message_log_context(event, effective_reply_to)
             logger.exception(
@@ -259,94 +249,10 @@ class TelethonMessageExecutor:
                 context["msg_id"],
                 context["sender_id"],
                 context["reply_to"],
-                action_name,
-                path,
+                action.action_name,
+                action.path,
             )
-        return reply_to
-
-    async def build_album_media(
-        self,
-        event: TelethonExecutionHost,
-        entity: Any,
-        path: str,
-        *,
-        spoiler: bool = False,
-        supports_streaming: bool = False,
-    ) -> Any:
-        types = _telethon_types()
-        telethon_utils = _telethon_utils()
-        functions = _telethon_functions()
-        media_kwargs: dict[str, Any] = {}
-        if supports_streaming:
-            media_kwargs["supports_streaming"] = True
-            media_kwargs["nosound_video"] = True
-
-        _file_handle, media, _is_image = await self._build_input_media(
-            event.client,
-            path,
-            **media_kwargs,
-        )
-        if spoiler:
-            return await self.finalize_spoiler_media(
-                event,
-                entity,
-                media,
-                mime_type="video/mp4" if supports_streaming else None,
-            )
-
-        if isinstance(media, (types.InputMediaUploadedPhoto, types.InputMediaPhotoExternal)):
-            result = await event.client(
-                functions.messages.UploadMediaRequest(peer=entity, media=media)
-            )
-            return telethon_utils.get_input_media(result.photo)
-
-        if isinstance(media, (types.InputMediaUploadedDocument, types.InputMediaDocumentExternal)):
-            result = await event.client(
-                functions.messages.UploadMediaRequest(peer=entity, media=media)
-            )
-            return telethon_utils.get_input_media(
-                result.document,
-                supports_streaming=supports_streaming,
-            )
-
-        return media
-
-    async def send_local_media_group_request(
-        self,
-        event: TelethonExecutionHost,
-        media_items: list[tuple[str, bool, bool]],
-        *,
-        caption: str | None,
-        reply_to: int | None,
-    ) -> None:
-        functions = _telethon_functions()
-        types = _telethon_types()
-        entity = await event._resolve_input_peer()
-        parsed_caption, msg_entities = await event._parse_formatting_entities(caption or "", None)
-        single_media: list[Any] = []
-
-        for index, (path, spoiler, is_video) in enumerate(media_items):
-            media = await self.build_album_media(
-                event,
-                entity,
-                path,
-                spoiler=spoiler,
-                supports_streaming=is_video,
-            )
-            single_media.append(
-                types.InputSingleMedia(
-                    media=media,
-                    message=parsed_caption if index == 0 else "",
-                    entities=msg_entities if index == 0 else None,
-                )
-            )
-
-        request = functions.messages.SendMultiMediaRequest(
-            peer=entity,
-            multi_media=single_media,
-            reply_to=event._normalize_low_level_reply_to(event._build_reply_to(reply_to)),
-        )
-        await event.client(request)
+        return action.reply_to
 
     async def react(self, event: TelethonExecutionHost, emoji: str) -> None:
         functions = _telethon_functions()

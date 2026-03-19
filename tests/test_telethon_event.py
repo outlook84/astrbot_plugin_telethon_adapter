@@ -972,6 +972,37 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(reply_to)
         self.assertEqual(kwargs, {})
 
+    async def test_send_explicit_local_media_group_preserves_at_caption_entities(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        at_type = sys.modules["astrbot.api.message_components"].At
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        chain = chain_type(
+            [
+                at_type(qq="123456", name="alice"),
+                _make_image_component("/tmp/a.png"),
+                _make_image_component("/tmp/b.png"),
+            ]
+        )
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "image"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_files), 1)
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, ["/tmp/a.png", "/tmp/b.png"])
+        self.assertIn('tg://user?id=123456', caption)
+        self.assertIn("@alice", caption)
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs["parse_mode"], "html")
+        self.assertEqual(len(client.sent_messages), 0)
+
     async def test_send_local_image_fast_upload_uses_send_media_request(self):
         module = _load_telethon_event_module()
         client = _FakeClient()
@@ -1148,6 +1179,159 @@ class TelethonEventTests(unittest.IsolatedAsyncioTestCase):
             ],
             [],
         )
+
+    async def test_send_plain_text_is_preferred_over_file_name_for_caption(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        file_component = _make_file_component("/tmp/archive.zip", name="archive.zip")
+
+        await event.send(chain_type([plain_type(text="说明"), file_component]))
+
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, "/tmp/archive.zip")
+        self.assertEqual(caption, "说明")
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs, {})
+
+    async def test_send_overlong_media_caption_falls_back_to_text_message(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        long_text = "a" * 1025
+
+        await event.send(chain_type([plain_type(text=long_text), _make_image_component("/tmp/a.png")]))
+
+        self.assertEqual(len(client.sent_messages), 1)
+        self.assertEqual(client.sent_messages[0][1], long_text)
+        self.assertEqual(len(client.sent_files), 1)
+        peer, file_payload, caption, reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(peer, 123)
+        self.assertEqual(file_payload, "/tmp/a.png")
+        self.assertIsNone(caption)
+        self.assertIsNone(reply_to)
+        self.assertEqual(kwargs, {})
+
+    async def test_send_explicit_local_media_group_with_overlong_caption_falls_back_to_normal_flow(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        chain = chain_type(
+            [
+                plain_type(text="a" * 1025),
+                _make_image_component("/tmp/a.png"),
+                _make_image_component("/tmp/b.png"),
+            ]
+        )
+        chain._gdl_meta = {
+            "version": 1,
+            "intent": "media_group",
+            "media_group": {"kind": "album", "media_type": "image"},
+        }
+
+        await event.send(chain)
+
+        self.assertEqual(len(client.sent_messages), 1)
+        self.assertEqual(client.sent_messages[0][1], "a" * 1025)
+        self.assertEqual(len(client.sent_files), 2)
+        self.assertEqual(client.sent_files[0][1], "/tmp/a.png")
+        self.assertIsNone(client.sent_files[0][2])
+        self.assertEqual(client.sent_files[1][1], "/tmp/b.png")
+        self.assertIsNone(client.sent_files[1][2])
+        self.assertEqual(
+            [
+                request
+                for request in client.requests
+                if type(request).__name__ == "SendMultiMediaRequest"
+            ],
+            [],
+        )
+
+    async def test_send_markdown_caption_is_normalized_to_html_for_media(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        plain_type = sys.modules["astrbot.api.message_components"].Plain
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(
+            chain_type([plain_type(text="## 标题\n- 条目"), _make_image_component("/tmp/a.png")])
+        )
+
+        self.assertEqual(len(client.sent_files), 1)
+        _peer, _file_payload, caption, _reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(kwargs["parse_mode"], "html")
+        self.assertNotIn("##", caption)
+        self.assertIn("<b>", caption)
+
+    async def test_send_at_component_uses_html_caption(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        at_type = sys.modules["astrbot.api.message_components"].At
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+        await event.send(
+            chain_type([at_type(qq="123456", name="alice"), _make_image_component("/tmp/a.png")])
+        )
+
+        self.assertEqual(len(client.sent_files), 1)
+        _peer, _file_payload, caption, _reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(kwargs["parse_mode"], "html")
+        self.assertIn('tg://user?id=123456', caption)
+        self.assertIn("@alice", caption)
+
+    async def test_send_html_caption_keeps_html_parse_mode(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+        chain_type = sys.modules["astrbot.api.event"].MessageChain
+        image = _make_image_component("/tmp/a.png")
+
+        await event._execute_media_action(
+            module.MediaAction(
+                path="/tmp/a.png",
+                caption="<b>完成</b>",
+                caption_parse_mode="html",
+                reply_to=None,
+                action_name="photo",
+                fallback_action=sys.modules["telethon.types"].SendMessageUploadPhotoAction(progress=0),
+            )
+        )
+
+        self.assertEqual(len(client.sent_files), 1)
+        _peer, _file_payload, caption, _reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(caption, "<b>完成</b>")
+        self.assertEqual(kwargs["parse_mode"], "html")
+
+    async def test_send_album_markdown_caption_is_normalized_to_html(self):
+        module = _load_telethon_event_module()
+        client = _FakeClient()
+        event = module.TelethonEvent("", object(), object(), "123", client)
+
+        await event._execute_media_group_action(
+            module.MediaGroupAction(
+                media_items=[("/tmp/a.png", False, False), ("/tmp/b.png", False, False)],
+                caption="## 标题\n- 条目",
+                caption_parse_mode="markdown",
+                reply_to=None,
+                action_name="photo",
+                fallback_action=sys.modules["telethon.types"].SendMessageUploadPhotoAction(progress=0),
+            )
+        )
+
+        self.assertEqual(len(client.sent_files), 1)
+        _peer, _file_payload, caption, _reply_to, kwargs = client.sent_files[0]
+        self.assertEqual(kwargs["parse_mode"], "html")
+        self.assertNotIn("##", caption)
+        self.assertIn("<b>", caption)
 
 
 @unittest.skipUnless(

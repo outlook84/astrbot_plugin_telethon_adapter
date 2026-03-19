@@ -165,6 +165,7 @@ class _FakeEvent:
         self.client = _FakeClient()
         self.peer = 123
         self.base_sent = []
+        self.media_calls = []
 
     async def _send_base_message(self, message):
         self.base_sent.append(message)
@@ -186,15 +187,48 @@ class _FakeEvent:
     def _is_gif_path(self, path):
         return False
 
-    async def _send_media(self, *args, **kwargs):
-        self.media_call = (args, kwargs)
-        return None
+    def _render_text_chunk(self, text_parts):
+        return "".join(part for part, _is_html in text_parts)
+
+    def _looks_like_markdown(self, text):
+        return False
+
+    async def _execute_media_action(self, action):
+        self.media_action = action
+        self.media_calls.append(action)
+        self.media_call = (
+            (
+                action.path,
+                action.caption,
+                action.caption_parse_mode,
+                action.reply_to,
+                action.action_name,
+                action.fallback_action,
+            ),
+            {
+                "mime_type": action.mime_type,
+                "attributes": action.attributes,
+                "spoiler": action.spoiler,
+            },
+        )
+        return action.reply_to
 
     def _component_has_spoiler(self, item):
         return False
 
-    async def _send_local_media_group_request(self, media_items, *, caption, reply_to):
-        self.low_level_media_group = (media_items, caption, reply_to)
+    async def _execute_media_group_action(self, action):
+        if not self._should_use_low_level_media_group_request(has_spoiler=False) and not any(
+            self._request_sender().should_use_fast_upload(self.client, path)
+            for path, _spoiler, _is_video in action.media_items
+        ):
+            await self.client.send_file(
+                self.peer,
+                file=[path for path, _spoiler, _is_video in action.media_items],
+                caption=action.caption,
+                reply_to=self._build_reply_to(action.reply_to),
+            )
+            return
+        self.low_level_media_group = (action.media_items, action.caption, action.reply_to)
 
     def _should_use_low_level_media_group_request(self, *, has_spoiler):
         return False
@@ -234,6 +268,17 @@ def _make_image_component(path):
 
     image.convert_to_file_path = _convert_to_file_path
     return image
+
+
+def _make_file_component(path, name="file.bin"):
+    file_type = sys.modules["astrbot.api.message_components"].File
+    file_component = file_type(name=name)
+
+    async def _get_file():
+        return path
+
+    file_component.get_file = _get_file
+    return file_component
 
 
 class TelethonMessageDispatcherTests(unittest.IsolatedAsyncioTestCase):
@@ -277,3 +322,85 @@ class TelethonMessageDispatcherTests(unittest.IsolatedAsyncioTestCase):
                 event.client.sent_files,
                 [(123, ["/tmp/a.png", "/tmp/b.png"], "done", None, {})],
             )
+
+    async def test_send_plain_text_becomes_file_caption_before_name_fallback(self):
+        with _isolated_stub_modules():
+            dispatcher = TelethonMessageDispatcher()
+            event = _FakeEvent()
+            plain_type = sys.modules["astrbot.api.message_components"].Plain
+            chain_type = sys.modules["astrbot.api.event"].MessageChain
+
+            message = chain_type(
+                [
+                    plain_type(text="说明"),
+                    _make_file_component("/tmp/archive.zip", name="archive.zip"),
+                ]
+            )
+
+            await dispatcher.send(event, message)
+
+            args, kwargs = event.media_call
+            self.assertEqual(args[0], "/tmp/archive.zip")
+            self.assertEqual(args[1], "说明")
+            self.assertIsNone(args[2])
+            self.assertEqual(args[4], "document")
+            self.assertEqual(event.base_sent, [message])
+
+    async def test_send_overlong_caption_falls_back_to_text_then_media(self):
+        with _isolated_stub_modules():
+            dispatcher = TelethonMessageDispatcher()
+            event = _FakeEvent()
+            plain_type = sys.modules["astrbot.api.message_components"].Plain
+            chain_type = sys.modules["astrbot.api.event"].MessageChain
+            long_text = "a" * 1025
+            message = chain_type([plain_type(text=long_text), _make_image_component("/tmp/a.png")])
+
+            await dispatcher.send(event, message)
+
+            self.assertEqual(event.flushed, [(long_text, False)])
+            args, kwargs = event.media_call
+            self.assertEqual(args[0], "/tmp/a.png")
+            self.assertIsNone(args[1])
+            self.assertIsNone(args[2])
+            self.assertEqual(kwargs["mime_type"], None)
+            self.assertEqual(kwargs["attributes"], None)
+            self.assertEqual(kwargs["spoiler"], False)
+
+    async def test_send_unsupported_segment_flushes_buffered_text_before_media(self):
+        with _isolated_stub_modules():
+            dispatcher = TelethonMessageDispatcher()
+            event = _FakeEvent()
+            plain_type = sys.modules["astrbot.api.message_components"].Plain
+            chain_type = sys.modules["astrbot.api.event"].MessageChain
+            message = chain_type([plain_type(text="hello"), object(), _make_image_component("/tmp/a.png")])
+
+            await dispatcher.send(event, message)
+
+            self.assertEqual(event.flushed, [("hello", False)])
+            args, _kwargs = event.media_call
+            self.assertEqual(args[0], "/tmp/a.png")
+            self.assertIsNone(args[1])
+
+    async def test_try_send_local_media_group_overlong_caption_returns_false(self):
+        with _isolated_stub_modules():
+            dispatcher = TelethonMessageDispatcher()
+            event = _FakeEvent()
+            plain_type = sys.modules["astrbot.api.message_components"].Plain
+            chain_type = sys.modules["astrbot.api.event"].MessageChain
+            message = chain_type(
+                [
+                    plain_type(text="a" * 1025),
+                    _make_image_component("/tmp/a.png"),
+                    _make_image_component("/tmp/b.png"),
+                ]
+            )
+            message._gdl_meta = {
+                "version": 1,
+                "intent": "media_group",
+                "media_group": {"kind": "album", "media_type": "image"},
+            }
+
+            result = await dispatcher.try_send_local_media_group(event, message)
+
+            self.assertFalse(result)
+            self.assertEqual(event.client.sent_files, [])

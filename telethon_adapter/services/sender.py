@@ -9,6 +9,10 @@ try:
     from ..transport.request_sender import TelethonRequestSender
 except ImportError:
     from telethon_adapter.transport.request_sender import TelethonRequestSender
+try:
+    from .message_planner import MediaAction
+except ImportError:
+    from telethon_adapter.services.message_planner import MediaAction
 
 
 class TelethonSender:
@@ -34,11 +38,15 @@ class TelethonSender:
         reply_to_msg_id = self._resolve_reply_to_message_id(event) if follow_reply else None
 
         if file_path:
-            sent_message = await sender.send_media(
-                file_path,
-                caption=text,
-                parse_mode="html",
-                reply_to_msg_id=reply_to_msg_id,
+            sent_message = await sender.send_media_action(
+                MediaAction(
+                    path=file_path,
+                    caption=text,
+                    caption_parse_mode="html",
+                    reply_to=reply_to_msg_id,
+                    action_name="document",
+                    fallback_action=None,
+                ),
             )
         else:
             sent_message = await sender.send_text(
