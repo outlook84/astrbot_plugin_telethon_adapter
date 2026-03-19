@@ -271,7 +271,7 @@ class TelethonAdapterPlugin(Star):
                 await self._sender.send_html_message(
                     event,
                     payload.text,
-                    file_path=payload.avatar_path,
+                    file_path=payload.avatar_file,
                     follow_reply=True,
                 )
                 return True

@@ -1,4 +1,5 @@
 import importlib.util
+from io import BytesIO
 import sys
 import sysconfig
 import types
@@ -217,6 +218,23 @@ class TelethonSenderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(getattr(result, "id", None), 89)
         self.assertEqual(client.sent_files[0][3]["reply_to"], 66)
 
+    async def test_send_html_bytesio_file_uses_send_file(self):
+        sender = TelethonSender()
+        client = _FakeClient()
+        avatar = BytesIO(b"avatar")
+        avatar.name = "avatar.jpg"
+
+        result = await sender.send_html_message(
+            _FakeEvent(client, reply_to_msg_id=66),
+            "hello",
+            file_path=avatar,
+            follow_reply=True,
+        )
+
+        self.assertEqual(getattr(result, "id", None), 89)
+        self.assertIs(client.sent_files[0][1], avatar)
+        self.assertEqual(client.sent_files[0][3]["reply_to"], 66)
+
     async def test_send_html_message_topic_defaults_to_thread_root(self):
         sender = TelethonSender()
         client = _FakeClient()
@@ -267,6 +285,23 @@ class TelethonSenderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(type(request.reply_to).__name__, "InputReplyToMessage")
         self.assertEqual(request.reply_to.reply_to_msg_id, 456)
         self.assertEqual(request.reply_to.top_msg_id, 456)
+
+    async def test_send_html_bytesio_file_topic_uses_send_media_request(self):
+        sender = TelethonSender()
+        client = _FakeClient()
+        avatar = BytesIO(b"avatar")
+        avatar.name = "avatar.jpg"
+
+        result = await sender.send_html_message(
+            _FakeEvent(client, thread_id=456),
+            "hello",
+            file_path=avatar,
+        )
+
+        self.assertEqual(getattr(result, "id", None), 90)
+        request = client.requests[0]
+        self.assertEqual(type(request).__name__, "SendMediaRequest")
+        self.assertEqual(request.media, f"media:{avatar}")
 
     async def test_send_html_file_fast_upload_uses_send_media_request(self):
         sender = TelethonSender()

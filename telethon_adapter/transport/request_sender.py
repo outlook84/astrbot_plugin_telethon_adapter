@@ -192,7 +192,8 @@ class TelethonRequestSender:
     ) -> Any:
         reply_to = self.build_reply_to(action.reply_to)
         use_fast_upload = bool(
-            self.should_use_fast_upload
+            isinstance(action.path, str)
+            and self.should_use_fast_upload
             and self.should_use_fast_upload(self.client, action.path)
         )
         if (

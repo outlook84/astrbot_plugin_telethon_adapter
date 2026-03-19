@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import html
+from io import BytesIO
 import os
 import re
-import tempfile
 from typing import Any
 
 from astrbot.api import logger
@@ -139,7 +139,7 @@ class ResolvedProfile:
 @dataclass(slots=True)
 class ProfilePayload:
     text: str
-    avatar_path: str | None = None
+    avatar_file: BytesIO | None = None
 
 
 class TelethonProfileService:
@@ -204,7 +204,7 @@ class TelethonProfileService:
 
         resolved = await self._resolve_profile(event, target)
         language = get_event_language(event)
-        avatar_path = await self._download_profile_photo(
+        avatar_file = await self._download_profile_photo(
             client,
             resolved.entity,
             resolved.full,
@@ -215,7 +215,7 @@ class TelethonProfileService:
                 detailed=detailed,
                 language=language,
             ),
-            avatar_path=avatar_path,
+            avatar_file=avatar_file,
         )
 
     async def render_profile(
@@ -1090,15 +1090,14 @@ class TelethonProfileService:
         client: Any,
         entity: Any,
         full: Any | None = None,
-    ) -> str | None:
+    ) -> BytesIO | None:
         if client is None or entity is None:
             return None
         try:
-            prefix = f"telethon_profile_{getattr(entity, 'id', 'unknown')}_"
-            temp_dir = tempfile.mkdtemp(prefix=prefix)
-            path = await client.download_profile_photo(entity, file=temp_dir, download_big=True)
-            if isinstance(path, str) and path and os.path.exists(path):
-                return self._resize_avatar(path)
+            raw = await client.download_profile_photo(entity, file=BytesIO(), download_big=True)
+            stream = self._normalize_avatar_stream(raw, entity)
+            if stream is not None:
+                return self._resize_avatar(stream, entity)
         except Exception:
             logger.debug(
                 "[Telethon] Failed to download avatar: entity_type=%s entity_id=%s",
@@ -1110,11 +1109,10 @@ class TelethonProfileService:
         fallback_photo = getattr(full, "chat_photo", None) or getattr(full, "profile_photo", None)
         if fallback_photo is not None:
             try:
-                prefix = f"telethon_profile_{getattr(entity, 'id', 'unknown')}_"
-                temp_dir = tempfile.mkdtemp(prefix=prefix)
-                path = await client.download_media(fallback_photo, file=temp_dir)
-                if isinstance(path, str) and path and os.path.exists(path):
-                    return self._resize_avatar(path)
+                raw = await client.download_media(fallback_photo, file=BytesIO())
+                stream = self._normalize_avatar_stream(raw, entity)
+                if stream is not None:
+                    return self._resize_avatar(stream, entity)
             except Exception:
                 logger.debug(
                     "[Telethon] Failed to download avatar via full photo: entity_type=%s entity_id=%s",
@@ -1125,20 +1123,53 @@ class TelethonProfileService:
         return None
 
     @staticmethod
-    def _resize_avatar(path: str) -> str:
+    def _avatar_filename(entity: Any, extension: str = ".jpg") -> str:
+        entity_id = getattr(entity, "id", "unknown")
+        safe_extension = extension if extension.startswith(".") else f".{extension}"
+        return f"telethon_profile_{entity_id}{safe_extension}"
+
+    @classmethod
+    def _normalize_avatar_stream(cls, raw: Any, entity: Any) -> BytesIO | None:
+        if raw is None:
+            return None
+        if isinstance(raw, BytesIO):
+            stream = raw
+        elif isinstance(raw, (bytes, bytearray, memoryview)):
+            stream = BytesIO(bytes(raw))
+        elif hasattr(raw, "read"):
+            try:
+                if hasattr(raw, "seek"):
+                    raw.seek(0)
+                stream = BytesIO(raw.read())
+            except Exception:
+                return None
+        else:
+            return None
+        stream.seek(0)
+        if not getattr(stream, "name", None):
+            stream.name = cls._avatar_filename(entity)
+        return stream
+
+    @classmethod
+    def _resize_avatar(cls, stream: BytesIO, entity: Any) -> BytesIO:
         try:
             from PIL import Image
         except Exception:
-            return path
+            stream.seek(0)
+            return stream
 
         try:
-            with Image.open(path) as image:
+            stream.seek(0)
+            with Image.open(stream) as image:
                 width, height = image.size
                 image_format = (image.format or "").upper()
                 if image_format not in {"JPEG", "JPG", "PNG", "WEBP"}:
-                    return path
+                    stream.seek(0)
+                    return stream
                 if width <= 300 or width <= 0 or height <= 0:
-                    return path
+                    stream.name = cls._avatar_filename(entity, cls._image_extension(image_format))
+                    stream.seek(0)
+                    return stream
                 resized_height = max(1, int(height * (300 / width)))
                 resized = image.resize((300, resized_height), Image.Resampling.LANCZOS)
                 save_kwargs: dict[str, Any] = {}
@@ -1148,10 +1179,31 @@ class TelethonProfileService:
                     save_kwargs.update({"format": "PNG", "compress_level": 1})
                 elif image_format == "WEBP":
                     save_kwargs.update({"format": "WEBP", "quality": 95})
-                resized.save(path, **save_kwargs)
+                output = BytesIO()
+                output.name = cls._avatar_filename(entity, cls._image_extension(image_format))
+                resized.save(output, **save_kwargs)
+                output.seek(0)
+                return output
         except Exception:
-            logger.debug("[Telethon] Failed to resize avatar: path=%s", path, exc_info=True)
-        return path
+            logger.debug(
+                "[Telethon] Failed to resize avatar: entity_type=%s entity_id=%s",
+                type(entity).__name__,
+                getattr(entity, "id", None),
+                exc_info=True,
+            )
+        stream.seek(0)
+        return stream
+
+    @staticmethod
+    def _image_extension(image_format: str) -> str:
+        normalized = str(image_format or "").upper()
+        if normalized in {"JPEG", "JPG"}:
+            return ".jpg"
+        if normalized == "PNG":
+            return ".png"
+        if normalized == "WEBP":
+            return ".webp"
+        return ".jpg"
 
     @classmethod
     def _stringify_value(cls, value: Any, language: str = "zh-CN") -> Any:

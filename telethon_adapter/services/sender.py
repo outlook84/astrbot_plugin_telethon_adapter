@@ -20,7 +20,7 @@ class TelethonSender:
         self,
         event: Any,
         text: str,
-        file_path: str | None = None,
+        file_path: Any | None = None,
         follow_reply: bool = False,
         link_preview: bool = False,
     ) -> Any:

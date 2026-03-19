@@ -1,4 +1,5 @@
 import importlib.util
+from io import BytesIO
 import sys
 import types
 import unittest
@@ -132,6 +133,8 @@ class _FakeClient:
         self.lookups = []
         self.profile_downloads = []
         self.media_downloads = []
+        self.profile_photo_result = RuntimeError("profile photo unavailable")
+        self.media_result = None
 
     async def get_entity(self, value):
         self.lookups.append(value)
@@ -139,11 +142,13 @@ class _FakeClient:
 
     async def download_profile_photo(self, entity, file=None, download_big=True):
         self.profile_downloads.append((entity, file, download_big))
-        raise RuntimeError("profile photo unavailable")
+        if isinstance(self.profile_photo_result, Exception):
+            raise self.profile_photo_result
+        return self.profile_photo_result
 
     async def download_media(self, media, file=None):
         self.media_downloads.append((media, file))
-        return None
+        return self.media_result
 
 
 class _FakeMessageObj:
@@ -666,6 +671,18 @@ class TelethonProfileServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(path)
         self.assertEqual(len(client.profile_downloads), 1)
         self.assertEqual(len(client.media_downloads), 1)
+
+    async def test_download_profile_photo_returns_named_bytesio(self):
+        service = TelethonProfileService()
+        client = _FakeClient()
+        entity = User(id=42)
+        client.profile_photo_result = BytesIO(b"avatar-bytes")
+
+        avatar = await service._download_profile_photo(client, entity)
+
+        self.assertIsInstance(avatar, BytesIO)
+        self.assertEqual(avatar.getvalue(), b"avatar-bytes")
+        self.assertEqual(getattr(avatar, "name", ""), "telethon_profile_42.jpg")
 
 
 if __name__ == "__main__":
