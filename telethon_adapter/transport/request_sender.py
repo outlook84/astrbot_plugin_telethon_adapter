@@ -16,6 +16,29 @@ def _telethon_types() -> Any:
     return importlib.import_module("telethon.types")
 
 
+def _input_reply_to_message_type() -> type[Any]:
+    types_module = _telethon_types()
+    reply_type = getattr(types_module, "InputReplyToMessage", None)
+    if reply_type is not None:
+        return reply_type
+
+    try:
+        tl_types = importlib.import_module("telethon.tl.types")
+    except ImportError:
+        tl_types = None
+    if tl_types is not None:
+        reply_type = getattr(tl_types, "InputReplyToMessage", None)
+        if reply_type is not None:
+            return reply_type
+
+    class InputReplyToMessage:
+        def __init__(self, reply_to_msg_id: int, top_msg_id: int | None = None):
+            self.reply_to_msg_id = reply_to_msg_id
+            self.top_msg_id = top_msg_id
+
+    return InputReplyToMessage
+
+
 @dataclass(slots=True)
 class TelethonRequestSender:
     client: Any
@@ -36,21 +59,19 @@ class TelethonRequestSender:
         if self.thread_id is None:
             return normalized_reply_to
 
-        types = _telethon_types()
         effective_reply_to = (
             normalized_reply_to if normalized_reply_to is not None else self.thread_id
         )
-        return types.InputReplyToMessage(
+        return _input_reply_to_message_type()(
             reply_to_msg_id=effective_reply_to,
             top_msg_id=self.thread_id,
         )
 
     @staticmethod
     def normalize_low_level_reply_to(reply_to: Any | None) -> Any | None:
-        types = _telethon_types()
-        if reply_to is None or isinstance(reply_to, types.InputReplyToMessage):
+        if reply_to is None or hasattr(reply_to, "reply_to_msg_id"):
             return reply_to
-        return types.InputReplyToMessage(reply_to_msg_id=int(reply_to))
+        return _input_reply_to_message_type()(reply_to_msg_id=int(reply_to))
 
     async def resolve_input_peer(self) -> Any:
         get_input_entity = getattr(self.client, "get_input_entity", None)
@@ -78,8 +99,7 @@ class TelethonRequestSender:
         return result
 
     def should_use_low_level_request(self, reply_to: Any | None) -> bool:
-        types = _telethon_types()
-        return isinstance(reply_to, types.InputReplyToMessage)
+        return hasattr(reply_to, "reply_to_msg_id")
 
     async def send_text(
         self,
