@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-03-20
+
+- 增加 `fastupload` 开关，可按需启用或关闭快速上传。
+- 改进 `caption` 处理，减少发送媒体时的文案行为不一致问题。
+
+- Added a `fastupload` toggle so fast upload can be enabled or disabled as needed.
+- Improved `caption` handling to reduce text behavior inconsistencies when sending media.
+
 ## 0.8.0 - 2026-03-18
 
 - 一批细节改进与稳定性增强。
