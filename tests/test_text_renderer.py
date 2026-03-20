@@ -89,3 +89,70 @@ class TelethonTextRendererTests(unittest.TestCase):
         parts = renderer.split_html_message("<b><i>x</i></b>")
 
         self.assertEqual(parts, ["x"])
+
+    def test_markdown_conversion_skips_root_whitespace_between_block_nodes(self):
+        class _FakeTextNode:
+            name = None
+
+            def __init__(self, text, parent=None):
+                self._text = text
+                self.parent = parent
+
+            def __str__(self):
+                return self._text
+
+        class _FakeTag:
+            def __init__(self, name, children=None, attrs=None, parent=None):
+                self.name = name
+                self.children = children or []
+                self.attrs = attrs or {}
+                self.parent = parent
+                for child in self.children:
+                    child.parent = self
+
+            def find(self, name):
+                for child in self.children:
+                    if getattr(child, "name", None) == name:
+                        return child
+                return None
+
+            def get(self, key, default=None):
+                return self.attrs.get(key, default)
+
+            def get_text(self):
+                return "".join(
+                    child.get_text() if getattr(child, "name", None) else str(child)
+                    for child in self.children
+                )
+
+        class _FakeSoup:
+            def __init__(self, children):
+                self.children = children
+                for child in self.children:
+                    child.parent = self
+                self.name = "[document]"
+
+        first_paragraph = _FakeTag("p", [_FakeTextNode("text")])
+        second_paragraph = _FakeTag(
+            "p",
+            [
+                _FakeTag(
+                    "a",
+                    [_FakeTextNode("example")],
+                    attrs={"href": "https://example.com"},
+                )
+            ],
+        )
+        fake_soup = _FakeSoup([first_paragraph, _FakeTextNode("\n"), second_paragraph])
+
+        original_markdownify = text_renderer_module.markdown.markdown
+        original_beautiful_soup = text_renderer_module.BeautifulSoup
+        text_renderer_module.markdown.markdown = lambda text, extensions=None: "<ignored>"
+        text_renderer_module.BeautifulSoup = lambda raw_html, parser: fake_soup
+        try:
+            rendered = TelethonTextRenderer.format_markdown_for_telethon_html("ignored")
+        finally:
+            text_renderer_module.markdown.markdown = original_markdownify
+            text_renderer_module.BeautifulSoup = original_beautiful_soup
+
+        self.assertEqual(rendered, 'text\n<a href="https://example.com">example</a>')

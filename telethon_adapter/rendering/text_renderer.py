@@ -233,10 +233,11 @@ class TelethonTextRenderer:
         raw_html = markdown.markdown(text, extensions=["fenced_code", "tables"])
         soup = BeautifulSoup(raw_html, "html.parser")
         block_container_tags = {"ul", "ol", "blockquote"}
+        block_whitespace_parent_tags = block_container_tags | {"[document]"}
 
         def should_skip_whitespace_text(node: Any) -> bool:
             return (
-                getattr(node.parent, "name", None) in block_container_tags
+                getattr(node.parent, "name", None) in block_whitespace_parent_tags
                 and not str(node).strip()
             )
 
