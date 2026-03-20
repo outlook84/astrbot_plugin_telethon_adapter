@@ -160,28 +160,6 @@ class TelethonStatusService:
         )
         return adapter_id, data_center
 
-    def _resolve_adapter(self, event: Any | None = None) -> Any | None:
-        if self._context is None:
-            return None
-        platform_manager = getattr(self._context, "platform_manager", None)
-        get_insts = getattr(platform_manager, "get_insts", None)
-        if not callable(get_insts):
-            return None
-        event_adapter_id = self._get_event_adapter_id(event)
-        event_client = getattr(event, "client", None)
-        for inst in get_insts():
-            try:
-                meta = inst.meta()
-            except Exception:
-                continue
-            if getattr(meta, "name", None) != "telethon_userbot":
-                continue
-            if event_client is not None and getattr(inst, "client", None) is event_client:
-                return inst
-            if event_adapter_id and getattr(meta, "id", None) == event_adapter_id:
-                return inst
-        return None
-
     @staticmethod
     def _get_event_adapter_id(event: Any | None) -> str:
         platform_meta = getattr(event, "platform_meta", None)
