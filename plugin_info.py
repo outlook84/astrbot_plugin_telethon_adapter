@@ -1,7 +1,7 @@
 PLUGIN_NAME = "telethon_adapter"
 PLUGIN_AUTHOR = "outlook84"
 PLUGIN_DESC = "Telethon-based Telegram Userbot adapter / 基于 Telethon 的 Telegram Userbot 适配器"
-PLUGIN_VERSION = "0.9.0"
+PLUGIN_VERSION = "0.10.0"
 PLUGIN_REPO = "https://github.com/outlook84/astrbot_plugin_telethon_adapter"
 PLUGIN_DISPLAY_NAME = "Telegram Userbot Adapter"
 PLUGIN_SUPPORT_PLATFORMS = ["telethon_userbot"]
