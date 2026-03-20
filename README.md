@@ -23,8 +23,8 @@ English README: [README_EN.md](README_EN.md)
 - 这是 Userbot 方案，账号风控由 Telegram 官方策略决定，账户被限制/封禁风险自负。
 - `session_string` 具备 Telegram 账号完全权限，请妥善保管。
 - 如果 `session_string` 失效，需要重新生成并更新配置。
+- `fast_upload_enabled` 默认关闭。该功能仅对本地文件上传生效，启用后会优先走 Telethon fast upload 并行上传链路；它依赖 Telethon 私有内部接口，并会增加并发连接与资源占用，可能在 Telethon 升级、网络不稳定或账号风控较严时带来上传失败、触发限速或行为变化风险。
 - `telethon_userbot` 不支持平台级流式展示；如果 AstrBot 开启了 `provider_settings.streaming_response`，请将“不支持流式回复的平台”设置为“关闭流式回复”。
-- 当前仓库已将运行时平台类型和插件元数据统一为 `telethon_userbot`。在 AstrBot 上游尚未合并对应平台类型前，`@platform_adapter_type("telegram")`、`platform_specific.telegram.*` 和基于 `support_platforms` 的既有 Telegram 语义不会自动命中该适配器。
 - 批量删消息属于高风险操作。当前实现默认启用保守限制：所有 `prune` 命令单次最多删除 `200` 条；`selfprune` / `youprune` 最多向前扫描 `1000` 条历史；每 `100` 条删除批次之间增加节流。
 - 删除权限、服务消息限制与 `FloodWait` 由 Telegram/Telethon 决定；即使命令参数正确，也可能因为会话权限或风控而部分成功或失败。
 
@@ -78,6 +78,7 @@ python3 ./astrbot_plugin_telethon_adapter/scripts/generate_session.py
 - `trigger_prefix`: 触发前缀，默认是 `-astr`。此为消息入口过滤前缀，用于减少无关消息日志和后续 AstrBot 管线调用；在本插件场景下可替代唤醒词使用。
 - `reply_to_self_triggers_command`: 是否允许“回复自己”的消息触发命令，默认 `false`。仅群聊生效；开启后，回复当前 Telethon 账号发出的消息，也会视为一次唤醒继续处理。
 - `download_incoming_media`: 是否下载收到的媒体文件（建议 `true`）
+- `fast_upload_enabled`: 是否启用 Telethon fast upload 并行上传，默认 `false`。仅对本地文件路径上传生效；开启后会优先尝试 fast upload，条件不满足时自动回退到 Telethon 默认上传
 - `telethon_media_group_timeout`: 媒体组聚合防抖延迟（秒，默认 `1.2`）
 - `telethon_media_group_max_wait`: 媒体组最大等待时间（秒，默认 `8.0`）
 - `proxy_type`: 代理类型，支持 `socks5`、`socks4`、`http`、`mtproto`

@@ -23,8 +23,8 @@ A Telegram Userbot adapter for AstrBot built on top of Telethon.
 - This is a Userbot solution. Account restrictions or bans are governed by Telegram policy and are your own responsibility.
 - `session_string` grants full access to the Telegram account. Store it carefully.
 - If `session_string` expires, generate a new one and update the configuration.
+- `fast_upload_enabled` is disabled by default. It only applies to local file uploads; when enabled, uploads prefer the Telethon fast upload parallel path. It relies on Telethon private internals and increases concurrent connections and resource usage, so Telethon upgrades, unstable networks, or stricter account risk controls may lead to upload failures, throttling, or behavior changes.
 - `telethon_userbot` does not support platform-level streaming display. If AstrBot enables `provider_settings.streaming_response`, set unsupported platforms to "disable streaming response".
-- The runtime platform type and plugin metadata in this repository are unified as `telethon_userbot`. Until AstrBot upstream merges the corresponding platform type, existing Telegram-specific hooks such as `@platform_adapter_type("telegram")`, `platform_specific.telegram.*`, and semantics based on `support_platforms` will not automatically target this adapter.
 - Batch deletion is a high-risk operation. The current implementation keeps conservative limits enabled by default: each `prune` command deletes at most `200` messages at a time; `selfprune` / `youprune` scan at most `1000` recent messages; throttling is applied between each batch of `100` deletions.
 - Delete permissions, service message constraints, and `FloodWait` behavior are determined by Telegram and Telethon. Even with correct parameters, deletion may partially succeed or fail because of permissions or rate limits.
 
@@ -80,6 +80,7 @@ Add a new platform adapter in AstrBot and choose `telethon_userbot`, then fill i
 - `trigger_prefix`: trigger prefix, default `-astr`. This acts as the message entry filter prefix to reduce unrelated logs and downstream AstrBot pipeline calls; in this plugin it can replace a wake word
 - `reply_to_self_triggers_command`: whether replying to your own message should trigger command handling, default `false`. Group chats only; when enabled, replying to a message sent by the current Telethon account is also treated as a wake-up trigger
 - `download_incoming_media`: whether to download received media, recommended `true`
+- `fast_upload_enabled`: whether to enable Telethon fast upload parallel uploading, default `false`. It only applies to local file path uploads; when enabled, the adapter will prefer fast upload and automatically fall back to Telethon's default uploader when conditions are not met
 - `telethon_media_group_timeout`: debounce delay for media group aggregation in seconds, default `1.2`
 - `telethon_media_group_max_wait`: maximum wait time for media group aggregation in seconds, default `8.0`
 - `proxy_type`: proxy type, supports `socks5`, `socks4`, `http`, `mtproto`
