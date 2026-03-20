@@ -14,10 +14,11 @@ def _install_astrbot_stubs() -> None:
 
     class _Logger:
         def __init__(self) -> None:
+            self.infos = []
             self.warnings = []
 
         def info(self, *args, **kwargs):
-            return None
+            self.infos.append((args, kwargs))
 
         def warning(self, *args, **kwargs):
             self.warnings.append((args, kwargs))
@@ -119,6 +120,24 @@ class _FakeSender:
 
 
 class FastUploadTests(unittest.IsolatedAsyncioTestCase):
+    def test_should_use_fast_upload_returns_false_when_disabled_by_config(self):
+        module = _load_fast_upload_module()
+        client = types.SimpleNamespace(
+            telethon_debug_logging=True,
+            telethon_fast_upload_enabled=False,
+            session=types.SimpleNamespace(dc_id=1, auth_key=b"key"),
+            _call=object(),
+            _get_dc=object(),
+            _connection=object(),
+            _log=object(),
+        )
+
+        enabled = module.should_use_fast_upload(client, __file__)
+
+        self.assertFalse(enabled)
+        self.assertTrue(module.logger.infos)
+        self.assertIn("reason=disabled_by_config", module.logger.infos[-1][0][0])
+
     async def test_finish_upload_waits_for_all_disconnects_and_logs_errors(self):
         module = _load_fast_upload_module()
         transferrer = module._ParallelTransferrer(client=types.SimpleNamespace(session=types.SimpleNamespace(dc_id=1, auth_key=None)))
