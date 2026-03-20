@@ -159,6 +159,22 @@ def _load_request_sender_module():
     return module
 
 
+def _import_request_sender_module_normally():
+    _install_astrbot_stubs()
+    _install_telethon_stubs()
+    package_name = "telethon_adapter"
+    package_path = Path(__file__).resolve().parents[1] / package_name
+
+    for module_name in list(sys.modules):
+        if module_name == package_name or module_name.startswith(f"{package_name}."):
+            del sys.modules[module_name]
+
+    package_module = types.ModuleType(package_name)
+    package_module.__path__ = [str(package_path)]
+    sys.modules[package_name] = package_module
+    return importlib.import_module(f"{package_name}.transport.request_sender")
+
+
 request_sender_module = _load_request_sender_module()
 TelethonRequestSender = request_sender_module.TelethonRequestSender
 
@@ -236,6 +252,10 @@ class _FakeClient:
 
 
 class TelethonRequestSenderTests(unittest.IsolatedAsyncioTestCase):
+    def test_import_request_sender_via_package_does_not_trigger_services_cycle(self):
+        module = _import_request_sender_module_normally()
+        self.assertIsNotNone(module.TelethonRequestSender)
+
     async def test_send_text_uses_send_message_without_thread(self):
         client = _FakeClient()
         sender = TelethonRequestSender(client=client, peer="peer:test")

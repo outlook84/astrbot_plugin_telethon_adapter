@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+import importlib
 import os
 import re
+from pathlib import Path
+import sys
 from typing import Any
 
 from astrbot.api.event import AstrMessageEvent, MessageChain
@@ -20,43 +23,50 @@ from astrbot.api.message_components import (
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from telethon import functions, types
 
-try:
+if __package__:
     from .transport.request_sender import TelethonRequestSender
-except ImportError:
-    from telethon_adapter.transport.request_sender import TelethonRequestSender
-
-try:
     from .rendering.text_renderer import TelethonTextRenderer
-except ImportError:
-    from telethon_adapter.rendering.text_renderer import TelethonTextRenderer
-
-try:
     from .services.message_dispatcher import TelethonMessageDispatcher
-except ImportError:
-    from telethon_adapter.services.message_dispatcher import TelethonMessageDispatcher
-
-try:
     from .services.message_executor import TelethonMessageExecutor
-except ImportError:
-    from telethon_adapter.services.message_executor import TelethonMessageExecutor
-try:
     from .services.message_planner import MediaAction, MediaGroupAction
-except ImportError:
-    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
-try:
     from .services.contracts import TelethonEventContext
-except ImportError:
-    from telethon_adapter.services.contracts import TelethonEventContext
-
-try:
     from .i18n import get_event_language, t
-except ImportError:
-    from telethon_adapter.i18n import get_event_language, t
-
-try:
     from .fast_upload import build_input_media, should_use_fast_upload
-except ImportError:
-    from telethon_adapter.fast_upload import build_input_media, should_use_fast_upload
+else:
+    _PACKAGE_NAME = "_telethon_adapter_direct"
+    _PACKAGE_PATH = str(Path(__file__).resolve().parent)
+    _package_module = sys.modules.get(_PACKAGE_NAME)
+    if _package_module is None:
+        import types as _types
+
+        _package_module = _types.ModuleType(_PACKAGE_NAME)
+        _package_module.__path__ = [_PACKAGE_PATH]
+        sys.modules[_PACKAGE_NAME] = _package_module
+
+    TelethonRequestSender = importlib.import_module(
+        f"{_PACKAGE_NAME}.transport.request_sender"
+    ).TelethonRequestSender
+    TelethonTextRenderer = importlib.import_module(
+        f"{_PACKAGE_NAME}.rendering.text_renderer"
+    ).TelethonTextRenderer
+    TelethonMessageDispatcher = importlib.import_module(
+        f"{_PACKAGE_NAME}.services.message_dispatcher"
+    ).TelethonMessageDispatcher
+    TelethonMessageExecutor = importlib.import_module(
+        f"{_PACKAGE_NAME}.services.message_executor"
+    ).TelethonMessageExecutor
+    _planner_module = importlib.import_module(f"{_PACKAGE_NAME}.services.message_planner")
+    MediaAction = _planner_module.MediaAction
+    MediaGroupAction = _planner_module.MediaGroupAction
+    TelethonEventContext = importlib.import_module(
+        f"{_PACKAGE_NAME}.services.contracts"
+    ).TelethonEventContext
+    _i18n_module = importlib.import_module(f"{_PACKAGE_NAME}.i18n")
+    get_event_language = _i18n_module.get_event_language
+    t = _i18n_module.t
+    _fast_upload_module = importlib.import_module(f"{_PACKAGE_NAME}.fast_upload")
+    build_input_media = _fast_upload_module.build_input_media
+    should_use_fast_upload = _fast_upload_module.should_use_fast_upload
 
 
 class TelethonEvent(AstrMessageEvent):

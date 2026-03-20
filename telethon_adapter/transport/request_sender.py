@@ -4,10 +4,7 @@ from dataclasses import dataclass
 import importlib
 from typing import Any, Awaitable, Callable
 
-try:
-    from ..services.message_planner import MediaAction, MediaGroupAction
-except ImportError:
-    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
+from ..services.message_planner import MediaAction, MediaGroupAction
 
 BuildInputMedia = Callable[..., Awaitable[tuple[Any, Any, bool]]]
 ShouldUseFastUpload = Callable[[Any, str], bool]

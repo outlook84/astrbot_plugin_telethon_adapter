@@ -4,18 +4,10 @@ from dataclasses import replace
 from typing import Any
 
 from astrbot.api import logger
-try:
-    from .contracts import TelethonDispatcherHost
-except ImportError:
-    from telethon_adapter.services.contracts import TelethonDispatcherHost
-try:
-    from .message_planner import MediaAction, TelethonMessagePlanner, TextAction
-except ImportError:
-    from telethon_adapter.services.message_planner import (
-        MediaAction,
-        TelethonMessagePlanner,
-        TextAction,
-    )
+from .contracts import TelethonDispatcherHost
+from .message_planner import MediaAction, TelethonMessagePlanner, TextAction
+
+
 class TelethonMessageDispatcher:
     def __init__(self) -> None:
         self._planner = TelethonMessagePlanner()

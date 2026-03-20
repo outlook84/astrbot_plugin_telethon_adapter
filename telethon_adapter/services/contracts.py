@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-try:
-    from .message_planner import MediaAction, MediaGroupAction
-except ImportError:
-    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
+from .message_planner import MediaAction, MediaGroupAction
 
 
 @dataclass(frozen=True, slots=True)

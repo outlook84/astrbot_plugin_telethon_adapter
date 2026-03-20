@@ -5,14 +5,8 @@ import heapq
 from typing import Any
 
 from ..fast_upload import build_input_media, should_use_fast_upload
-try:
-    from ..transport.request_sender import TelethonRequestSender
-except ImportError:
-    from telethon_adapter.transport.request_sender import TelethonRequestSender
-try:
-    from .message_planner import MediaAction
-except ImportError:
-    from telethon_adapter.services.message_planner import MediaAction
+from ..transport.request_sender import TelethonRequestSender
+from .message_planner import MediaAction
 
 
 class TelethonSender:

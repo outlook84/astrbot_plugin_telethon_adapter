@@ -7,14 +7,8 @@ from typing import Any, Awaitable, Callable
 
 from astrbot.api import logger
 
-try:
-    from .contracts import TelethonEventContext, TelethonExecutionHost
-except ImportError:
-    from telethon_adapter.services.contracts import TelethonEventContext, TelethonExecutionHost
-try:
-    from .message_planner import MediaAction, MediaGroupAction
-except ImportError:
-    from telethon_adapter.services.message_planner import MediaAction, MediaGroupAction
+from .contracts import TelethonEventContext, TelethonExecutionHost
+from .message_planner import MediaAction, MediaGroupAction
 
 BuildInputMedia = Callable[..., Awaitable[tuple[Any, Any, bool]]]
 

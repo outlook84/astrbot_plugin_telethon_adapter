@@ -285,10 +285,32 @@ async def build_input_media(
     nosound_video: bool | None = None,
 ) -> tuple[Any, Any, Any]:
     file_to_media = getattr(client, "_file_to_media", None)
-    if not callable(file_to_media):
-        raise RuntimeError("Telethon client does not expose _file_to_media")
+    fast_upload_enabled = should_use_fast_upload(client, file)
+    if not fast_upload_enabled:
+        if not callable(file_to_media):
+            if _FAST_UPLOAD_IMPORT_ERROR is not None:
+                raise RuntimeError("Telethon client does not expose _file_to_media")
+        else:
+            return await file_to_media(
+                file,
+                force_document=force_document,
+                file_size=file_size,
+                progress_callback=progress_callback,
+                attributes=attributes,
+                thumb=thumb,
+                allow_cache=allow_cache,
+                voice_note=voice_note,
+                video_note=video_note,
+                supports_streaming=supports_streaming,
+                mime_type=mime_type,
+                as_image=as_image,
+                ttl=ttl,
+                nosound_video=nosound_video,
+            )
 
-    if not should_use_fast_upload(client, file):
+    if _FAST_UPLOAD_IMPORT_ERROR is not None:
+        if not callable(file_to_media):
+            raise RuntimeError("Telethon client does not expose _file_to_media")
         return await file_to_media(
             file,
             force_document=force_document,
