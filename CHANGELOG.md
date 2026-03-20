@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0 - 2026-03-20
+
+- 重构日志系统，普通调试日志改为跟随 AstrBot 全局 `DEBUG` 日志级别。
+- 移除用户可见的 `debug_logging` 配置项。
+
+- Refactored logging so normal Telethon diagnostics now follow AstrBot's global `DEBUG` log level.
+- Removed the user-visible `debug_logging` option.
+
 ## 0.9.0 - 2026-03-20
 
 - 增加 `fastupload` 开关，可按需启用或关闭快速上传。
