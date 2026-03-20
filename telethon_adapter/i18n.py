@@ -48,10 +48,6 @@ CONFIG_FIELD_TEXTS = {
             "description": "仅记录已处理消息",
             "hint": "开启后，只记录真正提交给 AstrBot 处理的消息。",
         },
-        "debug_logging": {
-            "description": "调试日志",
-            "hint": "开启后，输出更详细的 Telethon 事件转换与命令调试日志。",
-        },
         "fast_upload_enabled": {
             "description": "启用 Fast Upload 并行上传",
             "hint": "默认关闭。开启后，本地文件会优先尝试走 Telethon fast upload 并行上传链路；关闭后始终回退到 Telethon 默认上传。",
@@ -135,10 +131,6 @@ CONFIG_FIELD_TEXTS = {
         "log_processed_messages_only": {
             "description": "Log Processed Messages Only",
             "hint": "When enabled, only messages actually submitted to AstrBot are logged.",
-        },
-        "debug_logging": {
-            "description": "Debug Logging",
-            "hint": "When enabled, output more detailed Telethon event conversion and command debug logs.",
         },
         "fast_upload_enabled": {
             "description": "Enable Fast Upload Parallel Upload",

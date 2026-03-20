@@ -390,23 +390,26 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(adapter.media_group_max_wait, 8.0)
         self.assertEqual(adapter.proxy_port, 0)
         self.assertEqual(adapter.proxy_type, "mtproto")
-        self.assertFalse(adapter.debug_logging)
+        self.assertTrue(adapter.log_processed_messages_only)
+        self.assertFalse(adapter.raw_event_debug)
         self.assertFalse(adapter.fast_upload_enabled)
 
-    def test_init_parses_debug_logging_flag(self):
+    def test_init_parses_raw_event_debug_flag(self):
         module = _load_adapter_module()
         adapter = module.TelethonPlatformAdapter(
             {
                 "api_id": 123,
                 "api_hash": "hash",
                 "session_string": "session",
-                "debug_logging": "true",
+                "raw_event_debug": "true",
+                "log_processed_messages_only": "false",
             },
             {},
             asyncio.Queue(),
         )
 
-        self.assertTrue(adapter.debug_logging)
+        self.assertTrue(adapter.raw_event_debug)
+        self.assertFalse(adapter.log_processed_messages_only)
 
     def test_init_parses_fast_upload_enabled_flag(self):
         module = _load_adapter_module()

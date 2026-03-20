@@ -92,17 +92,15 @@ class TelethonMessageConverter:
         message = getattr(event, "message", None)
         is_private = self.resolve_is_private(message, getattr(event, "is_private", False))
         peer = getattr(message, "peer_id", None)
-        if getattr(self.adapter, "debug_logging", False):
-            logger.info(
-                "[Telethon][Debug] convert_message: chat_id=%s sender_id=%s peer_type=%s "
-                "is_private_event=%s is_private_final=%s raw_text=%r",
-                getattr(event, "chat_id", None),
-                getattr(event, "sender_id", None),
-                type(peer).__name__ if peer is not None else None,
-                getattr(event, "is_private", None),
-                is_private,
-                getattr(message, "raw_text", ""),
-            )
+        logger.debug(
+            "[Telethon] convert_message: chat_id=%s sender_id=%s peer_type=%s "
+            "is_private_event=%s is_private_final=%s",
+            getattr(event, "chat_id", None),
+            getattr(event, "sender_id", None),
+            type(peer).__name__ if peer is not None else None,
+            getattr(event, "is_private", None),
+            is_private,
+        )
         chat_id = str(event.chat_id)
         thread_id = None if is_private else self.extract_thread_id(message)
         reply_to_self_triggers_command = await self.should_treat_reply_to_self_as_command(
@@ -274,16 +272,13 @@ class TelethonMessageConverter:
             if not message.message_str and media_components:
                 message.message_str = self._label("message.media.placeholder")
 
-        if getattr(self.adapter, "debug_logging", False):
-            logger.info(
-                "[Telethon][Debug] convert_result: chat_id=%s type=%s session_id=%s "
-                "message_str=%r component_types=%s",
-                chat_id,
-                getattr(message, "type", None),
-                getattr(message, "session_id", None),
-                getattr(message, "message_str", ""),
-                [type(component).__name__ for component in message.message],
-            )
+        logger.debug(
+            "[Telethon] convert_result: chat_id=%s type=%s session_id=%s component_types=%s",
+            chat_id,
+            getattr(message, "type", None),
+            getattr(message, "session_id", None),
+            [type(component).__name__ for component in message.message],
+        )
 
         return message
 

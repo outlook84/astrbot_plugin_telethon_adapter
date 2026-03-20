@@ -19,6 +19,9 @@ def _install_main_stubs():
     star_module = types.ModuleType("astrbot.api.star")
 
     class _Logger:
+        def debug(self, *args, **kwargs):
+            return None
+
         def info(self, *args, **kwargs):
             return None
 
@@ -145,7 +148,6 @@ TelethonAdapterPlugin = main_module.TelethonAdapterPlugin
 class _FakeEvent:
     def __init__(self):
         self.result = None
-        self.telethon_debug_logging = False
 
     def set_result(self, value):
         self.result = value
