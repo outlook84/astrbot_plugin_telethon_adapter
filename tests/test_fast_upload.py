@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import sys
 import types
 import unittest
@@ -151,6 +152,22 @@ class FastUploadTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sender_fail.disconnected)
         self.assertIsNone(transferrer.senders)
         self.assertEqual(len(module.logger.warnings), 1)
+
+    def test_log_upload_target_preprocess_describes_memory_target(self):
+        module = _load_fast_upload_module()
+        client = types.SimpleNamespace(telethon_debug_logging=True)
+        buffer = io.BytesIO(b"data")
+        buffer.name = "a.jpg"
+
+        module._log_upload_target_preprocess(client, "/tmp/source.jpg", buffer)
+
+        self.assertTrue(module.logger.infos)
+        message = module.logger.infos[-1][0][0]
+        args = module.logger.infos[-1][0][1:]
+        self.assertIn("upload_target_preprocessed", message)
+        self.assertEqual(args[0], "/tmp/source.jpg")
+        self.assertEqual(args[1], "BytesIO")
+        self.assertEqual(args[2], "a.jpg")
 
 
 if __name__ == "__main__":

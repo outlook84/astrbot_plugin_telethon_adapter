@@ -16,36 +16,11 @@ import asyncio
 import hashlib
 import math
 import os
-from pathlib import Path
+import pathlib
+import re
 from typing import Any
 
 from astrbot.api import logger
-
-try:
-    from telethon import helpers, utils
-    from telethon.network import MTProtoSender
-    from telethon.tl import types
-    from telethon.tl.alltlobjects import LAYER
-    from telethon.tl.functions import InvokeWithLayerRequest
-    from telethon.tl.functions.auth import (
-        ExportAuthorizationRequest,
-        ImportAuthorizationRequest,
-    )
-    from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
-except (ImportError, AttributeError) as exc:
-    helpers = None
-    utils = None
-    MTProtoSender = Any
-    types = None
-    LAYER = None
-    InvokeWithLayerRequest = None
-    ExportAuthorizationRequest = None
-    ImportAuthorizationRequest = None
-    SaveBigFilePartRequest = None
-    SaveFilePartRequest = None
-    _FAST_UPLOAD_IMPORT_ERROR = exc
-else:
-    _FAST_UPLOAD_IMPORT_ERROR = None
 
 
 def _debug_logging_enabled(client: Any) -> bool:
@@ -59,6 +34,51 @@ def _fast_upload_feature_enabled(client: Any) -> bool:
 def _log_debug(client: Any, message: str, *args: Any) -> None:
     if _debug_logging_enabled(client):
         logger.info(message, *args)
+
+
+def _log_upload_target_preprocess(
+    client: Any,
+    original_file: Any,
+    upload_target: Any,
+) -> None:
+    if upload_target is original_file:
+        return
+    _log_debug(
+        client,
+        "[Telethon][Debug] build_input_media: upload_target_preprocessed original=%r target_type=%s target_name=%r",
+        original_file,
+        type(upload_target).__name__,
+        getattr(upload_target, "name", None),
+    )
+
+
+try:
+    from telethon import helpers, utils
+    from telethon.client.uploads import _resize_photo_if_needed
+    from telethon.network import MTProtoSender
+    from telethon.tl import types
+    from telethon.tl.alltlobjects import LAYER
+    from telethon.tl.functions import InvokeWithLayerRequest
+    from telethon.tl.functions.auth import (
+        ExportAuthorizationRequest,
+        ImportAuthorizationRequest,
+    )
+    from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
+except (ImportError, AttributeError) as exc:
+    helpers = None
+    utils = None
+    _resize_photo_if_needed = None
+    MTProtoSender = Any
+    types = None
+    LAYER = None
+    InvokeWithLayerRequest = None
+    ExportAuthorizationRequest = None
+    ImportAuthorizationRequest = None
+    SaveBigFilePartRequest = None
+    SaveFilePartRequest = None
+    _FAST_UPLOAD_IMPORT_ERROR = exc
+else:
+    _FAST_UPLOAD_IMPORT_ERROR = None
 
 
 def should_use_fast_upload(client: Any, file: Any) -> bool:
@@ -75,7 +95,7 @@ def should_use_fast_upload(client: Any, file: Any) -> bool:
             "[Telethon][Debug] fast_upload_unavailable: reason=disabled_by_config",
         )
         return False
-    if isinstance(file, Path):
+    if isinstance(file, pathlib.Path):
         file = str(file.absolute())
     if not isinstance(file, str) or not os.path.isfile(file):
         _log_debug(
@@ -271,26 +291,25 @@ async def _fast_upload_file(
     file: str,
     *,
     file_size: int | None = None,
+    file_name: str | None = None,
+    progress_callback: Any = None,
 ) -> Any:
     if _FAST_UPLOAD_IMPORT_ERROR is not None:
         raise RuntimeError("fast upload is unavailable") from _FAST_UPLOAD_IMPORT_ERROR
 
-    actual_size = file_size if file_size is not None else os.path.getsize(file)
-    file_id = helpers.generate_random_long()
-    part_size: int
-    part_count: int
-    is_large: bool
-    transferrer = _ParallelTransferrer(client)
-    part_size, part_count, is_large = await transferrer.init_upload(file_id, actual_size)
-    hash_md5 = hashlib.md5()
-
+    actual_file_size = file_size if file_size is not None else os.path.getsize(file)
     _log_debug(
         client,
         "[Telethon][Debug] fast_upload_start: path=%s size=%s",
         file,
-        actual_size,
+        actual_file_size,
     )
-
+    file_id = helpers.generate_random_long()
+    resolved_name = file_name or os.path.basename(file)
+    transferrer = _ParallelTransferrer(client)
+    part_size, part_count, is_large = await transferrer.init_upload(file_id, actual_file_size)
+    hash_md5 = hashlib.md5()
+    sent = 0
     uploaded_parts = 0
     uploaded_bytes = 0
 
@@ -300,11 +319,14 @@ async def _fast_upload_file(
                 part = await asyncio.to_thread(reader.read, part_size)
                 if not part:
                     break
+                sent += len(part)
                 if not is_large:
                     hash_md5.update(part)
                 await transferrer.upload(part)
                 uploaded_parts += 1
                 uploaded_bytes += len(part)
+                if progress_callback:
+                    await helpers._maybe_await(progress_callback(sent, actual_file_size))
     finally:
         await transferrer.finish_upload()
 
@@ -318,8 +340,8 @@ async def _fast_upload_file(
     )
 
     if is_large:
-        return types.InputFileBig(file_id, part_count, os.path.basename(file))
-    return types.InputFile(file_id, part_count, os.path.basename(file), hash_md5.hexdigest())
+        return types.InputFileBig(file_id, part_count, resolved_name)
+    return types.InputFile(file_id, part_count, resolved_name, hash_md5.hexdigest())
 
 
 async def build_input_media(
@@ -394,32 +416,129 @@ async def build_input_media(
             nosound_video=nosound_video,
         )
 
-    _log_debug(
-        client,
-        "[Telethon][Debug] build_input_media: using_fast_upload file=%r file_size=%r",
+    if isinstance(file, pathlib.Path):
+        file = str(file.absolute())
+
+    is_image = utils.is_image(file)
+    if as_image is None:
+        as_image = is_image and not force_document
+
+    if not isinstance(file, (str, bytes, types.InputFile, types.InputFileBig)) and not hasattr(
+        file, "read"
+    ):
+        try:
+            return (
+                None,
+                utils.get_input_media(
+                    file,
+                    is_photo=as_image,
+                    attributes=attributes,
+                    force_document=force_document,
+                    voice_note=voice_note,
+                    video_note=video_note,
+                    supports_streaming=supports_streaming,
+                    ttl=ttl,
+                ),
+                as_image,
+            )
+        except TypeError:
+            return None, None, as_image
+
+    media = None
+    file_handle = None
+
+    if isinstance(file, (types.InputFile, types.InputFileBig)):
+        file_handle = file
+    elif not isinstance(file, str) or os.path.isfile(file):
+        upload_target = _resize_photo_if_needed(file, as_image)
+        _log_upload_target_preprocess(client, file, upload_target)
+        if (
+            should_use_fast_upload(client, upload_target)
+            and isinstance(upload_target, str)
+            and os.path.isfile(upload_target)
+        ):
+            _log_debug(
+                client,
+                "[Telethon][Debug] build_input_media: using_fast_upload file=%r file_size=%r",
+                upload_target,
+                file_size,
+            )
+            file_handle = await _fast_upload_file(
+                client,
+                upload_target,
+                file_size=file_size,
+                progress_callback=progress_callback,
+            )
+            _log_debug(
+                client,
+                "[Telethon][Debug] build_input_media: fast_upload_produced_input_file file=%r uploaded_type=%s",
+                upload_target,
+                type(file_handle).__name__,
+            )
+        else:
+            if upload_target is not file:
+                _log_debug(
+                    client,
+                    "[Telethon][Debug] build_input_media: fast_upload_skipped_after_preprocess original=%r target_type=%s target_name=%r",
+                    file,
+                    type(upload_target).__name__,
+                    getattr(upload_target, "name", None),
+                )
+            file_handle = await client.upload_file(
+                upload_target,
+                file_size=file_size,
+                progress_callback=progress_callback,
+            )
+    elif re.match(r"https?://", file):
+        if as_image:
+            media = types.InputMediaPhotoExternal(file, ttl_seconds=ttl)
+        else:
+            media = types.InputMediaDocumentExternal(file, ttl_seconds=ttl)
+    else:
+        bot_file = utils.resolve_bot_file_id(file)
+        if bot_file:
+            media = utils.get_input_media(bot_file, ttl=ttl)
+
+    if media:
+        return file_handle, media, as_image
+    if not file_handle:
+        raise ValueError(
+            f"Failed to convert {file} to media. Not an existing file, an HTTP URL or a valid bot file ID"
+        )
+    if as_image:
+        return file_handle, types.InputMediaUploadedPhoto(file_handle, ttl_seconds=ttl), as_image
+
+    attributes, mime_type = utils.get_attributes(
         file,
-        file_size,
-    )
-    uploaded_file = await _fast_upload_file(client, str(file), file_size=file_size)
-    _log_debug(
-        client,
-        "[Telethon][Debug] build_input_media: fast_upload_produced_input_file file=%r uploaded_type=%s",
-        file,
-        type(uploaded_file).__name__,
-    )
-    return await file_to_media(
-        uploaded_file,
-        force_document=force_document,
-        file_size=file_size,
-        progress_callback=progress_callback,
+        mime_type=mime_type,
         attributes=attributes,
-        thumb=thumb,
-        allow_cache=False,
+        force_document=force_document and not is_image,
         voice_note=voice_note,
         video_note=video_note,
         supports_streaming=supports_streaming,
-        mime_type=mime_type,
-        as_image=as_image,
-        ttl=ttl,
-        nosound_video=nosound_video,
+        thumb=thumb,
+    )
+
+    if thumb:
+        if isinstance(thumb, pathlib.Path):
+            thumb = str(thumb.absolute())
+        thumb = await client.upload_file(thumb, file_size=file_size)
+    else:
+        thumb = None
+
+    if mime_type.split("/")[0] != "video":
+        nosound_video = None
+
+    return (
+        file_handle,
+        types.InputMediaUploadedDocument(
+            file=file_handle,
+            mime_type=mime_type,
+            attributes=attributes,
+            thumb=thumb,
+            force_file=force_document and not is_image,
+            ttl_seconds=ttl,
+            nosound_video=nosound_video,
+        ),
+        as_image,
     )
