@@ -366,6 +366,31 @@ class TelethonMessageDispatcherTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["attributes"], None)
             self.assertEqual(kwargs["spoiler"], False)
 
+    async def test_send_rich_caption_that_expands_past_limit_falls_back_to_text(self):
+        with _isolated_stub_modules():
+            dispatcher = TelethonMessageDispatcher()
+
+            class _RichCaptionEvent(_FakeEvent):
+                def _format_at_html(self, item):
+                    return f'<a href="https://t.me/{item.qq}">{item.name}</a> '
+
+                def _format_at_text(self, item):
+                    return f"@{item.name} "
+
+            event = _RichCaptionEvent()
+            at_type = sys.modules["astrbot.api.message_components"].At
+            chain_type = sys.modules["astrbot.api.event"].MessageChain
+            mentions = [at_type(qq=f"user{index}", name="x") for index in range(170)]
+            message = chain_type([*mentions, _make_image_component("/tmp/a.png")])
+
+            await dispatcher.send(event, message)
+
+            self.assertEqual(len(event.flushed), 170)
+            self.assertTrue(all(is_html for _part, is_html in event.flushed))
+            args, _kwargs = event.media_call
+            self.assertIsNone(args[1])
+            self.assertIsNone(args[2])
+
     async def test_send_unsupported_segment_flushes_buffered_text_before_media(self):
         with _isolated_stub_modules():
             dispatcher = TelethonMessageDispatcher()

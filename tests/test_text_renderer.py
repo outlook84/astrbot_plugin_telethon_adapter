@@ -78,3 +78,14 @@ class TelethonTextRendererTests(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         self.assertTrue(parts[0].endswith("\n"))
         self.assertEqual(parts[1], "rest")
+
+    def test_split_html_message_drops_unreopenable_tags_instead_of_looping(self):
+        renderer = TelethonTextRenderer(
+            max_message_length=5,
+            split_patterns={},
+            markdown_hint_patterns=(),
+        )
+
+        parts = renderer.split_html_message("<b><i>x</i></b>")
+
+        self.assertEqual(parts, ["x"])

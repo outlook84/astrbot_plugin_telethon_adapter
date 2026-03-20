@@ -294,7 +294,10 @@ class TelethonMessagePlanner:
         if len(caption) > self.CAPTION_LIMIT:
             return None, None
         if any(is_html for _part, is_html in text_buffer.rich_parts):
-            return event._render_text_chunk(text_buffer.rich_parts), "html"
+            rendered_caption = event._render_text_chunk(text_buffer.rich_parts)
+            if len(rendered_caption) > self.CAPTION_LIMIT:
+                return None, None
+            return rendered_caption, "html"
         if event._looks_like_markdown(caption):
             return caption, "markdown"
         return caption, None

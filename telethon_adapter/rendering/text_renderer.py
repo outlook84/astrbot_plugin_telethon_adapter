@@ -95,6 +95,10 @@ class TelethonTextRenderer:
         def flush_current() -> None:
             nonlocal current
             if current:
+                if current == opening_tags():
+                    stack.clear()
+                    current = ""
+                    return
                 chunks.append(current + closing_tags())
                 current = opening_tags()
 
@@ -104,6 +108,13 @@ class TelethonTextRenderer:
                 reserved = len(closing_tags())
                 available = self.max_message_length - len(current) - reserved
                 if available <= 0:
+                    if stack and current == opening_tags():
+                        # Reopening tags can consume the entire chunk budget for
+                        # deeply nested or long-link markup. Drop that carry-over
+                        # formatting so we can keep splitting instead of looping.
+                        stack.clear()
+                        current = ""
+                        continue
                     flush_current()
                     continue
                 if len(text) <= available:
@@ -124,14 +135,19 @@ class TelethonTextRenderer:
                 tag_name = tag_match.group(1).lower()
                 is_closing = token.startswith("</")
                 is_self_closing = token.endswith("/>") or tag_name in void_tags
+                if is_closing:
+                    closing_index = None
+                    for index in range(len(stack) - 1, -1, -1):
+                        if stack[index][0] == tag_name:
+                            closing_index = index
+                            break
+                    if closing_index is None:
+                        continue
                 if len(current) + len(token) + len(closing_tags()) > self.max_message_length:
                     flush_current()
                 current += token
                 if is_closing:
-                    for index in range(len(stack) - 1, -1, -1):
-                        if stack[index][0] == tag_name:
-                            del stack[index:]
-                            break
+                    del stack[closing_index:]
                 elif not is_self_closing:
                     stack.append((tag_name, token))
                 continue
