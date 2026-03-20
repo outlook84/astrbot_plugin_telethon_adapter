@@ -18,8 +18,8 @@ FIELD_SPECS = {
     "download_incoming_media": {"type": "bool"},
     "incoming_media_ttl_seconds": {"type": "float"},
     "log_processed_messages_only": {"type": "bool"},
-    "debug_logging": {"type": "bool"},
     "fast_upload_enabled": {"type": "bool"},
+    "raw_event_debug": {"type": "bool", "invisible": True},
     "telethon_media_group_timeout": {"type": "float"},
     "telethon_media_group_max_wait": {"type": "float"},
     "proxy_type": {
@@ -71,8 +71,8 @@ DEFAULT_CONFIG_TEMPLATE = {
     "download_incoming_media": True,
     "incoming_media_ttl_seconds": 600.0,
     "log_processed_messages_only": True,
-    "debug_logging": False,
     "fast_upload_enabled": False,
+    "raw_event_debug": False,
     "telethon_media_group_timeout": 1.2,
     "telethon_media_group_max_wait": 8.0,
     "proxy_type": "",
@@ -173,11 +173,11 @@ def apply_config(adapter: Any) -> None:
     adapter.log_processed_messages_only = parse_bool(
         adapter.config.get("log_processed_messages_only"), True
     )
-    adapter.debug_logging = parse_bool(
-        adapter.config.get("debug_logging"), False
-    )
     adapter.fast_upload_enabled = parse_bool(
         adapter.config.get("fast_upload_enabled"), False
+    )
+    adapter.raw_event_debug = parse_bool(
+        adapter.config.get("raw_event_debug"), False
     )
     adapter.media_group_timeout = parse_float(
         adapter.config.get("telethon_media_group_timeout"),

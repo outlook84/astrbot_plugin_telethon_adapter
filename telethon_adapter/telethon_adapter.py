@@ -236,7 +236,6 @@ class TelethonPlatformAdapter(Platform):
 
     async def _run_client_once(self, client_kwargs: dict[str, Any]) -> None:
         self.client = self._create_client(client_kwargs)
-        setattr(self.client, "telethon_debug_logging", bool(self.debug_logging))
         setattr(self.client, "telethon_fast_upload_enabled", bool(self.fast_upload_enabled))
         await self.client.connect()
         if not await self.client.is_user_authorized():
@@ -254,7 +253,7 @@ class TelethonPlatformAdapter(Platform):
             "[Telethon] Userbot started: %s username=%s "
             "download_incoming_media=%s incoming_media_ttl_seconds=%s "
             "trigger_prefix=%r reply_to_self_triggers_command=%s log_processed_messages_only=%s proxy_type=%s "
-            "proxy_host=%s proxy_port=%s fast_upload_enabled=%s raw_config=%s",
+            "proxy_host=%s proxy_port=%s fast_upload_enabled=%s raw_event_debug=%s raw_config=%s",
             self.self_id,
             self.self_username,
             self.download_incoming_media,
@@ -266,6 +265,7 @@ class TelethonPlatformAdapter(Platform):
             self.proxy_host or "",
             self.proxy_port or 0,
             self.fast_upload_enabled,
+            self.raw_event_debug,
             {
                 "trigger_prefix": self.config.get("trigger_prefix"),
                 "reply_to_self_triggers_command": self.config.get(
@@ -278,6 +278,7 @@ class TelethonPlatformAdapter(Platform):
                 "log_processed_messages_only": self.config.get(
                     "log_processed_messages_only"
                 ),
+                "raw_event_debug": self.config.get("raw_event_debug"),
                 "proxy_type": self.config.get("proxy_type"),
                 "proxy_host": self.config.get("proxy_host"),
                 "proxy_port": self.config.get("proxy_port"),
@@ -293,7 +294,8 @@ class TelethonPlatformAdapter(Platform):
             self._on_new_message,
             events.NewMessage(incoming=False, outgoing=True),
         )
-        if not self.log_processed_messages_only:
+        if self.raw_event_debug:
+            logger.warning("[Telethon] Raw event debug is enabled; platform logs will include Telethon update summaries")
             self.client.add_event_handler(self._on_raw_event, events.Raw())
 
         self._main_task = asyncio.create_task(self.client.run_until_disconnected())
@@ -517,7 +519,7 @@ class TelethonPlatformAdapter(Platform):
 
     def _log_unprocessed(self, message: str, *args: Any) -> None:
         if not self.log_processed_messages_only:
-            logger.info(message, *args)
+            logger.debug(message, *args)
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         if not self._running:
@@ -553,26 +555,25 @@ class TelethonPlatformAdapter(Platform):
         self._recent_event_keys[event_key] = now
 
         self._log_unprocessed(
-            "[Telethon] Received message event: chat_id=%s sender_id=%s out=%s private=%s text=%r",
+            "[Telethon] message_received: chat_id=%s sender_id=%s out=%s private=%s has_text=%s",
             getattr(event, "chat_id", None),
             getattr(event, "sender_id", None),
             getattr(event.message, "out", None) if getattr(event, "message", None) else None,
             getattr(event, "is_private", None),
-            getattr(event.message, "raw_text", "") if getattr(event, "message", None) else "",
+            bool(getattr(event.message, "raw_text", "")) if getattr(event, "message", None) else False,
         )
-        if self.debug_logging:
-            peer = getattr(getattr(event, "message", None), "peer_id", None)
-            self._log_unprocessed(
-                "[Telethon][Debug] raw_event: chat_id=%s sender_id=%s peer_type=%s "
-                "msg_id=%s grouped_id=%s out=%s private=%s",
-                getattr(event, "chat_id", None),
-                getattr(event, "sender_id", None),
-                type(peer).__name__ if peer is not None else None,
-                getattr(getattr(event, "message", None), "id", None),
-                getattr(getattr(event, "message", None), "grouped_id", None),
-                getattr(getattr(event, "message", None), "out", None),
-                getattr(event, "is_private", None),
-            )
+        peer = getattr(getattr(event, "message", None), "peer_id", None)
+        self._log_unprocessed(
+            "[Telethon] message_received_detail: chat_id=%s sender_id=%s peer_type=%s "
+            "msg_id=%s grouped_id=%s out=%s private=%s",
+            getattr(event, "chat_id", None),
+            getattr(event, "sender_id", None),
+            type(peer).__name__ if peer is not None else None,
+            getattr(getattr(event, "message", None), "id", None),
+            getattr(getattr(event, "message", None), "grouped_id", None),
+            getattr(getattr(event, "message", None), "out", None),
+            getattr(event, "is_private", None),
+        )
         grouped_id = getattr(event.message, "grouped_id", None)
         if grouped_id:
             await self._handle_grouped_message(
@@ -618,17 +619,16 @@ class TelethonPlatformAdapter(Platform):
             getattr(getattr(abm, "sender", None), "user_id", None),
             getattr(abm, "message_str", ""),
         )
-        if self.debug_logging:
-            logger.info(
-                "[Telethon][Debug] commit_event: platform_id=%s self_id=%s session_id=%s "
-                "message_id=%s type=%s text=%r",
-                getattr(self.meta(), "id", None),
-                getattr(abm, "self_id", None),
-                getattr(abm, "session_id", None),
-                getattr(abm, "message_id", None),
-                getattr(abm, "type", None),
-                getattr(abm, "message_str", ""),
-            )
+        logger.debug(
+            "[Telethon] commit_event: platform_id=%s self_id=%s session_id=%s "
+            "message_id=%s type=%s component_types=%s",
+            getattr(self.meta(), "id", None),
+            getattr(abm, "self_id", None),
+            getattr(abm, "session_id", None),
+            getattr(abm, "message_id", None),
+            getattr(abm, "type", None),
+            [type(component).__name__ for component in getattr(abm, "message", [])],
+        )
         self._commit_abm(abm)
 
     async def _on_raw_event(self, event: events.Raw) -> None:
@@ -646,18 +646,18 @@ class TelethonPlatformAdapter(Platform):
 
         peer_id = getattr(message, "peer_id", None)
         from_id = getattr(message, "from_id", None)
-        raw_text = getattr(message, "message", "")
         out = getattr(message, "out", None)
         msg_id = getattr(message, "id", None)
+        grouped_id = getattr(message, "grouped_id", None)
 
         logger.info(
-            "[Telethon][Raw] update=%s msg_id=%s out=%s peer_id=%s from_id=%s text=%r",
+            "[Telethon][Raw] update=%s msg_id=%s grouped_id=%s out=%s peer_id=%s from_id=%s",
             update_name,
             msg_id,
+            grouped_id,
             out,
             type(peer_id).__name__ if peer_id else None,
             type(from_id).__name__ if from_id else None,
-            raw_text,
         )
 
     def _commit_abm(self, abm: AstrBotMessage) -> None:
@@ -669,7 +669,6 @@ class TelethonPlatformAdapter(Platform):
             client=self.client,
         )
         message_event.adapter_capability = self._build_adapter_capability()
-        message_event.telethon_debug_logging = self.debug_logging
         message_event.telethon_language = self.language
         self.commit_event(message_event)
 
